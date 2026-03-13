@@ -1,0 +1,233 @@
+# Crypto Relative Value Engine
+
+Motor local para analizar oportunidades relative value en Binance y exponer un dashboard en `localhost`.
+
+## Estado actual
+
+El proyecto vive en [crypto_relative_value_engine](C:/Users/Jose.Duran/algoritmo-%20cripto/crypto_relative_value_engine).
+
+Lo que quedó armado:
+
+- Dashboard local con Streamlit en `http://localhost:8501`
+- Monitor continuo en segundo plano con `monitor.py`
+- Launcher único para ambos procesos: `start_services.ps1`
+- Wrapper para Windows: `start_services.cmd`
+- `run_monitor.ps1` y `run_monitor.cmd` redirigidos al launcher nuevo
+- Logs y PID files en `output/`
+
+## Archivos clave
+
+```text
+crypto_relative_value_engine/
+    local_dashboard.py
+    main.py
+    monitor.py
+    start_services.ps1
+    start_services.cmd
+    run_monitor.ps1
+    run_monitor.cmd
+    requirements.txt
+    output/
+```
+
+## Modos
+
+- `COPILOT`: solo análisis. No ejecuta órdenes.
+- `AUTO_SAFE`: puede ejecutar con filtros y controles más estrictos.
+
+## Requisitos
+
+- Python 3.12 instalado en:
+  `C:\Users\Jose.Duran\AppData\Local\Programs\Python\Python312\python.exe`
+- Dependencias de [requirements.txt](C:/Users/Jose.Duran/algoritmo-%20cripto/crypto_relative_value_engine/requirements.txt)
+
+## Cómo correrlo manualmente
+
+Desde la carpeta del proyecto:
+
+```powershell
+cd "C:\Users\Jose.Duran\algoritmo- cripto\crypto_relative_value_engine"
+python main.py --mode COPILOT
+```
+
+Para abrir el dashboard:
+
+```powershell
+cd "C:\Users\Jose.Duran\algoritmo- cripto\crypto_relative_value_engine"
+python -m streamlit run local_dashboard.py --server.headless true --server.port 8501
+```
+
+URL local:
+
+```text
+http://localhost:8501
+```
+
+## Cómo arrancar dashboard + monitor juntos
+
+Este es el entrypoint recomendado:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start_services.ps1
+```
+
+Qué hace:
+
+- levanta Streamlit en el puerto `8501` si no está ya arriba
+- levanta `monitor.py --mode COPILOT --poll-minutes 5` si no está corriendo
+- guarda PIDs en `output\streamlit.pid` y `output\monitor.pid`
+- escribe logs en `output\streamlit_stdout.log`, `output\streamlit_stderr.log`, `output\monitor_stdout.log`, `output\monitor_stderr.log`
+- intenta abrir el navegador en `http://localhost:8501`
+
+También puedes usar:
+
+```powershell
+.\start_services.cmd
+```
+
+## Autoarranque en Windows
+
+### Opción que sí quedó funcionando
+
+Se dejó la carpeta `Startup` como mecanismo de autoarranque del usuario.
+
+Ruta:
+
+```text
+C:\Users\Jose.Duran\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup
+```
+
+Entrada usada:
+
+```text
+crypto_relative_value_monitor.cmd
+```
+
+Esa entrada llama a `start_services.ps1`.
+
+### Opción Task Scheduler
+
+Se preparó el archivo [CryptoRelativeValueAutoStart.xml](C:/Users/Jose.Duran/algoritmo-%20cripto/crypto_relative_value_engine/CryptoRelativeValueAutoStart.xml), pero no se pudo registrar desde esta sesión porque Windows devolvió `Acceso denegado`.
+
+Si en algún momento puedes abrir una terminal con privilegios adecuados, puedes crear la tarea con:
+
+```powershell
+schtasks /Create /TN "CryptoRelativeValueAutoStart" /SC ONLOGON /TR "powershell -ExecutionPolicy Bypass -File \"C:\Users\Jose.Duran\algoritmo- cripto\crypto_relative_value_engine\start_services.ps1\"" /RL LIMITED /F
+```
+
+## Qué se corrigió
+
+- Se detectó que el autoarranque original solo levantaba `monitor.py`
+- Se detectó que Streamlit no estaba instalado en el entorno usado por el proyecto
+- Se instalaron las dependencias para Python 3.12
+- Se unificó el arranque en un solo script
+- Se dejó verificado que el dashboard escucha en `localhost:8501`
+
+## Comandos útiles
+
+Ver si el dashboard está escuchando:
+
+```powershell
+netstat -ano | Select-String ":8501"
+```
+
+Ver logs de Streamlit:
+
+```powershell
+Get-Content .\output\streamlit_stdout.log
+Get-Content .\output\streamlit_stderr.log
+```
+
+Ver logs del monitor:
+
+```powershell
+Get-Content .\output\monitor_stdout.log
+Get-Content .\output\monitor_stderr.log
+```
+
+Ver PIDs guardados:
+
+```powershell
+Get-Content .\output\streamlit.pid
+Get-Content .\output\monitor.pid
+```
+
+## Credenciales opcionales
+
+Solo si quieres live trading:
+
+- `BINANCE_API_KEY`
+- `BINANCE_API_SECRET`
+
+Solo si quieres alertas por email:
+
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USER`
+- `SMTP_PASSWORD`
+- `ALERT_FROM_EMAIL`
+- `ALERT_TO_EMAIL`
+- `SMTP_USE_TLS=true`
+
+## Recomendación de arquitectura
+
+Si no puedes usar PowerShell como administrador, estas son las opciones sensatas:
+
+### Mejor opción para este proyecto
+
+Mantener el motor y el monitor corriendo en tu PC local con `Startup` o con un acceso directo al launcher.
+
+Por qué:
+
+- este proyecto depende de procesos persistentes
+- consume APIs y puede escribir archivos locales
+- Streamlit está pensado para correr como app viva, no como función serverless
+
+### GitHub sí, pero para código y automatización limitada
+
+GitHub sirve para:
+
+- guardar versión del proyecto
+- tener backup
+- disparar tests o tareas batch con GitHub Actions
+
+GitHub no sirve bien para:
+
+- mantener abierto un `localhost`
+- tener un monitor persistente 24/7 para uso personal local
+
+### Vercel no es buena opción para este motor completo
+
+Vercel puede servir si separas una parte web liviana, pero no para este motor tal como está.
+
+Problemas:
+
+- Vercel es serverless
+- no está pensado para procesos persistentes
+- `monitor.py` no encaja bien ahí
+- Streamlit no es el deploy natural en Vercel
+- el acceso a archivos y estado local es limitado
+
+### Si quieres algo más estable sin admin
+
+Alternativas reales:
+
+- dejar `Startup` como está ahora
+- usar un acceso directo al `.cmd` en el escritorio
+- usar `pythonw` o un `.cmd` silencioso para que no moleste una consola
+- subir el repo a GitHub solo para versionado
+- si luego quieres nube real, mover esto a un VPS o Railway/Render, no a Vercel
+
+## Siguiente paso recomendado
+
+Si quieres seguir sin permisos de administrador:
+
+1. deja `Startup` como mecanismo de autoarranque
+2. sube el proyecto a GitHub para backup
+3. si quieres acceso remoto o 24/7, migramos el monitor a un VPS o servicio tipo Render/Railway
+
+Para uso local diario, hoy la ruta más pragmática es:
+
+```text
+PC local + Startup + Streamlit en localhost:8501
+```
