@@ -14,6 +14,16 @@ st.set_page_config(page_title="Crypto Relative Value Engine", layout="wide")
 STRATEGY_SIGNALS_PATH = Path("output/strategy_signals_latest.csv")
 
 
+def _interval_recommendation(interval: str) -> str:
+    if interval == "15m":
+        return "Recomendacion UX: 15m para entradas y 200 a 300 velas para intradia."
+    if interval == "1h":
+        return "Recomendacion UX: 1h para setup y 200 a 400 velas para swing corto."
+    if interval == "4h":
+        return "Recomendacion UX: 4h para tendencia y 150 a 300 velas para contexto."
+    return "Recomendacion UX: intenta mostrar entre 150 y 300 velas para mantener contexto sin exceso de ruido."
+
+
 def _style_direction(value: object) -> str:
     if value == "LONG":
         return "color: #0f9d58; font-weight: 700;"
@@ -95,6 +105,8 @@ with st.sidebar:
     symbols_raw = st.text_input("Symbols", ",".join(DEFAULT_ALTS))
     interval = st.selectbox("Intervalo", ["1h", "4h", "15m"], index=0)
     limit = st.slider("Velas", min_value=300, max_value=1500, value=1000, step=100)
+    st.caption(_interval_recommendation(interval))
+    st.caption("Base sugerida: 4h para tendencia, 1h para setup y 15m para entrada.")
     live_mode = st.checkbox("Live mode", value=False)
     paper_trading = st.checkbox("Paper trading", value=True)
     dry_run = st.checkbox("Dry run", value=True)
@@ -144,8 +156,9 @@ else:
         "La nota sale del ranking relativo entre score, edge, z-score, estabilidad, liquidez y volatilidad."
     )
     st.info(
-        "Velas: un intervalo mas corto reacciona mas rapido pero mete mas ruido. "
-        "Mas velas agregan mas historia al modelo; menos velas lo hacen mas sensible pero menos estable."
+        "Velas e intervalo: un marco corto reacciona mas rapido pero mete mas ruido. "
+        "Como base, usa 150 a 300 velas visibles para contexto. "
+        "Referencia practica: 4h para tendencia, 1h para setup y 15m para entrada."
     )
 
     ranked_view = result.ranked_universe.copy()
