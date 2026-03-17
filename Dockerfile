@@ -12,4 +12,6 @@ COPY . .
 
 RUN mkdir -p /app/output
 
-CMD ["python", "monitor.py"]
+EXPOSE 8080
+
+CMD ["python", "mobile_dashboard.py"]

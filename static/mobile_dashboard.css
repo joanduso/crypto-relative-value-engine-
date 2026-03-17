@@ -1,0 +1,274 @@
+:root {
+  --bg: #f3efe5;
+  --panel: rgba(255, 252, 245, 0.92);
+  --ink: #1a1816;
+  --muted: #60584f;
+  --line: rgba(26, 24, 22, 0.12);
+  --accent: #bf5b04;
+  --accent-2: #0f766e;
+  --long: #1f8a4c;
+  --short: #b42318;
+  --shadow: 0 18px 45px rgba(38, 30, 18, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Space Grotesk", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(191, 91, 4, 0.16), transparent 28%),
+    radial-gradient(circle at top right, rgba(15, 118, 110, 0.18), transparent 30%),
+    linear-gradient(180deg, #f7f3ea 0%, #efe8db 100%);
+}
+
+.shell {
+  width: min(100%, 960px);
+  margin: 0 auto;
+  padding: 24px 16px 40px;
+}
+
+.hero,
+.panel,
+.filters,
+.summary-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+}
+
+.hero {
+  border-radius: 28px;
+  padding: 24px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(2rem, 7vw, 3.5rem);
+  line-height: 0.95;
+}
+
+.subtitle {
+  margin-top: 12px;
+  max-width: 42rem;
+  color: var(--muted);
+}
+
+.hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.pill,
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 0.84rem;
+  font-weight: 700;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.summary-card {
+  border-radius: 22px;
+  padding: 16px;
+}
+
+.summary-card .label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.84rem;
+  margin-bottom: 6px;
+}
+
+.summary-card strong {
+  font-size: 1.5rem;
+}
+
+.filters,
+.panel {
+  border-radius: 24px;
+  padding: 18px;
+  margin-top: 16px;
+}
+
+.filters-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.filters-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
+.filters-form input,
+.filters-form select,
+.filters-form button {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  padding: 12px 14px;
+  font: inherit;
+}
+
+.filters-form button {
+  align-self: end;
+  background: var(--ink);
+  color: #fff;
+  font-weight: 700;
+}
+
+.checkbox {
+  flex-direction: row;
+  align-items: center;
+  align-self: end;
+  gap: 10px;
+}
+
+.checkbox input {
+  width: auto;
+}
+
+.panel-head,
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.panel-head {
+  margin-bottom: 14px;
+}
+
+.panel-head a {
+  color: var(--accent-2);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.card-stack,
+.mini-list {
+  display: grid;
+  gap: 12px;
+}
+
+.opportunity-card,
+.signal-card,
+.mini-card {
+  border-radius: 22px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.82);
+  padding: 16px;
+}
+
+.opportunity-card.long {
+  border-left: 6px solid var(--long);
+}
+
+.opportunity-card.short {
+  border-left: 6px solid var(--short);
+}
+
+.badge-group {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.direction {
+  color: #fff;
+}
+
+.long .direction {
+  background: var(--long);
+}
+
+.short .direction {
+  background: var(--short);
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.metrics span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-bottom: 4px;
+}
+
+.metrics strong {
+  font-size: 0.95rem;
+  word-break: break-word;
+}
+
+.mini-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mini-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.empty {
+  color: var(--muted);
+}
+
+@media (min-width: 768px) {
+  .summary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .filters-form {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .filters-form .checkbox {
+    grid-column: span 1;
+  }
+}

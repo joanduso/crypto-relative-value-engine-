@@ -108,14 +108,17 @@ def build_feature_frame(
         subset["fair_value"] = np.exp(subset["predicted_log_price"])
         subset["spread"] = subset["log_alt"] - subset["beta_btc"] * subset["log_btc"] - subset["beta_eth"] * subset["log_eth"]
         subset["residual_log"] = subset["log_alt"] - subset["predicted_log_price"]
-        subset["residual_mean"] = subset["residual_log"].rolling(cfg.zscore_window, min_periods=max(24, cfg.zscore_window // 3)).mean()
-        subset["residual_std"] = subset["residual_log"].rolling(cfg.zscore_window, min_periods=max(24, cfg.zscore_window // 3)).std(ddof=0)
+        zscore_min_periods = min(cfg.zscore_window, max(24, cfg.zscore_window // 3))
+        vol_min_periods = min(cfg.volatility_window, 12)
+        stability_min_periods = min(cfg.stability_window, 12)
+        subset["residual_mean"] = subset["residual_log"].rolling(cfg.zscore_window, min_periods=zscore_min_periods).mean()
+        subset["residual_std"] = subset["residual_log"].rolling(cfg.zscore_window, min_periods=zscore_min_periods).std(ddof=0)
         subset["z_score"] = (subset["residual_log"] - subset["residual_mean"]) / subset["residual_std"]
         subset["deviation_pct"] = (subset["alt_price"] / subset["fair_value"] - 1.0) * 100.0
         subset["returns"] = subset["alt_price"].pct_change()
-        subset["realized_volatility"] = subset["returns"].rolling(cfg.volatility_window, min_periods=12).std(ddof=0) * np.sqrt(24 * 365)
+        subset["realized_volatility"] = subset["returns"].rolling(cfg.volatility_window, min_periods=vol_min_periods).std(ddof=0) * np.sqrt(24 * 365)
         subset["spread_abs_change"] = subset["residual_log"].diff().abs()
-        stability_raw = subset["spread_abs_change"].rolling(cfg.stability_window, min_periods=12).mean()
+        stability_raw = subset["spread_abs_change"].rolling(cfg.stability_window, min_periods=stability_min_periods).mean()
         subset["spread_stability_score"] = (1.0 / (1.0 + stability_raw * 100.0)).clip(lower=0.0, upper=1.0)
         subset["funding_rate"] = funding.get(symbol)
         records.append(subset)

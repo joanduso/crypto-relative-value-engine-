@@ -1,17 +1,26 @@
 from __future__ import annotations
 
+import logging
 import os
+import socket
 import smtplib
+import ssl
+import time
 from dataclasses import dataclass
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
+import requests
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class EmailConfig:
+    resend_api_key: str | None
     smtp_host: str
     smtp_port: int
     smtp_user: str
@@ -21,16 +30,41 @@ class EmailConfig:
     use_tls: bool = True
 
 
+class IPv4FirstSMTP(smtplib.SMTP):
+    def _get_socket(self, host: str, port: int, timeout: float):
+        return _create_socket(host, port, timeout)
+
+
+class IPv4FirstSMTP_SSL(smtplib.SMTP_SSL):
+    def _get_socket(self, host: str, port: int, timeout: float):
+        sock = _create_socket(host, port, timeout)
+        return self.context.wrap_socket(sock, server_hostname=host)
+
+
 def email_config_from_env() -> EmailConfig | None:
+    resend_api_key = os.getenv("RESEND_API_KEY")
     host = os.getenv("SMTP_HOST")
     port = os.getenv("SMTP_PORT")
     user = os.getenv("SMTP_USER")
     password = os.getenv("SMTP_PASSWORD")
     from_email = os.getenv("ALERT_FROM_EMAIL")
     to_email = os.getenv("ALERT_TO_EMAIL")
+    if resend_api_key and from_email and to_email:
+        return EmailConfig(
+            resend_api_key=resend_api_key,
+            smtp_host=host or "",
+            smtp_port=int(port or 587),
+            smtp_user=user or "",
+            smtp_password=password or "",
+            from_email=from_email,
+            to_email=to_email,
+            use_tls=os.getenv("SMTP_USE_TLS", "true").lower() != "false",
+        )
+
     if not all([host, port, user, password, from_email, to_email]):
         return None
     return EmailConfig(
+        resend_api_key=None,
         smtp_host=host,
         smtp_port=int(port),
         smtp_user=user,
@@ -39,6 +73,33 @@ def email_config_from_env() -> EmailConfig | None:
         to_email=to_email,
         use_tls=os.getenv("SMTP_USE_TLS", "true").lower() != "false",
     )
+
+
+def _create_socket(host: str, port: int, timeout: float) -> socket.socket:
+    last_error: OSError | None = None
+    addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    addresses = sorted(addresses, key=lambda item: 0 if item[0] == socket.AF_INET else 1)
+
+    for family, socktype, proto, _, sockaddr in addresses:
+        sock = socket.socket(family, socktype, proto)
+        sock.settimeout(timeout)
+        try:
+            sock.connect(sockaddr)
+            return sock
+        except OSError as exc:
+            last_error = exc
+            sock.close()
+
+    if last_error is not None:
+        raise last_error
+    raise OSError(f"Unable to resolve SMTP host {host}:{port}")
+
+
+def _smtp_attempts(config: EmailConfig) -> list[tuple[str, int, bool]]:
+    attempts = [(config.smtp_host, config.smtp_port, config.use_tls)]
+    if config.smtp_host == "smtp.gmail.com" and (config.smtp_port != 465 or config.use_tls):
+        attempts.append((config.smtp_host, 465, False))
+    return attempts
 
 
 def select_alert_candidates(
@@ -150,11 +211,14 @@ def format_alert_email(mode_name: str, alerts_df: pd.DataFrame) -> tuple[str, st
     subject = f"[Crypto RV] {len(alerts_df)} senales nuevas en {mode_name}"
     lines = [f"Se detectaron {len(alerts_df)} senales nuevas:", ""]
     for row in alerts_df.itertuples(index=False):
+        timeframe = f" | tf={row.timeframe}" if hasattr(row, "timeframe") else ""
+        stop_loss = f"{row.suggested_stop_loss:.4f}" if hasattr(row, "suggested_stop_loss") else "n/a"
+        take_profit = f"{row.suggested_take_profit:.4f}" if hasattr(row, "suggested_take_profit") else "n/a"
         lines.append(
             (
-                f"{row.symbol} | {row.suggested_direction} | {row.signal_quality} | "
+                f"{row.symbol} | {row.suggested_direction} | {row.signal_quality}{timeframe} | "
                 f"precio={row.current_price:.4f} | fair={row.expected_fair_value:.4f} | "
-                f"entrada={row.suggested_entry:.4f} | stop={row.suggested_stop_loss:.4f} | take={row.suggested_take_profit:.4f} | "
+                f"entrada={row.suggested_entry:.4f} | stop={stop_loss} | take={take_profit} | "
                 f"desvio={row.deviation_pct:.2f}% | z={row.z_score:.2f} | "
                 f"score={row.confidence_score:.1f}"
             )
@@ -195,14 +259,51 @@ def daily_best_alerts(history_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def send_email_alert(config: EmailConfig, subject: str, body: str) -> None:
+    if config.resend_api_key:
+        response = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {config.resend_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": config.from_email,
+                "to": [config.to_email],
+                "subject": subject,
+                "text": body,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        return
+
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = config.from_email
     message["To"] = config.to_email
     message.set_content(body)
 
-    with smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=30) as smtp:
-        if config.use_tls:
-            smtp.starttls()
-        smtp.login(config.smtp_user, config.smtp_password)
-        smtp.send_message(message)
+    last_error: Exception | None = None
+    for attempt_number, (host, port, use_starttls) in enumerate(_smtp_attempts(config), start=1):
+        try:
+            context = ssl.create_default_context()
+            if use_starttls:
+                with IPv4FirstSMTP(host=host, port=port, timeout=30) as smtp:
+                    smtp.starttls(context=context)
+                    smtp.login(config.smtp_user, config.smtp_password)
+                    smtp.send_message(message)
+                    return
+            with IPv4FirstSMTP_SSL(host=host, port=port, timeout=30, context=context) as smtp:
+                smtp.login(config.smtp_user, config.smtp_password)
+                smtp.send_message(message)
+                return
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "smtp send attempt failed",
+                extra={"host": host, "port": port, "attempt": attempt_number, "error": str(exc)},
+            )
+            time.sleep(min(attempt_number, 3))
+
+    if last_error is not None:
+        raise last_error

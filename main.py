@@ -4,6 +4,7 @@ import argparse
 
 from data_ingestion import symbols_from_string
 from engine import DEFAULT_ALTS, EngineRunConfig, run_engine
+from interval_profiles import profile_for_interval
 from signal_engine import EngineMode
 
 
@@ -21,12 +22,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 def run() -> None:
     args = parse_args()
+    profile = profile_for_interval(args.interval)
     result = run_engine(
         EngineRunConfig(
             mode=EngineMode(args.mode),
             symbols=symbols_from_string(args.symbols, DEFAULT_ALTS),
             interval=args.interval,
             limit=args.limit,
+            feature_config=profile.feature_config,
             csv_path=args.csv_path,
             live_mode=args.live_mode,
             paper_trading=args.paper_trading,

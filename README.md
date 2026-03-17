@@ -10,6 +10,7 @@ Lo que quedó armado:
 
 - Dashboard local con Streamlit en `http://localhost:8501`
 - Monitor continuo en segundo plano con `monitor.py`
+- Monitor multi-timeframe en Railway para `15m`, `1h` y `4h`
 - Launcher único para ambos procesos: `start_services.ps1`
 - Wrapper para Windows: `start_services.cmd`
 - `run_monitor.ps1` y `run_monitor.cmd` redirigidos al launcher nuevo
@@ -168,6 +169,23 @@ Solo si quieres alertas por email:
 - `ALERT_FROM_EMAIL`
 - `ALERT_TO_EMAIL`
 - `SMTP_USE_TLS=true`
+
+## Metodologia de timeframes
+
+El monitor de Railway puede correr varios intervalos en paralelo usando `MONITOR_INTERVALS`.
+
+Configuracion recomendada:
+
+- `15m`: `1500` velas, polling cada `5` minutos
+- `1h`: `1000` velas, polling cada `5` minutos
+- `4h`: `360` velas, polling cada `15` minutos
+
+Criterio:
+
+- la regresion y el z-score usan aproximadamente `14` dias de barras
+- la estabilidad usa aproximadamente `3` dias de barras
+- la volatilidad usa aproximadamente `1` dia de barras
+- eso mantiene comparable la logica estadistica entre `15m`, `1h` y `4h`
 
 ## Recomendación de arquitectura
 

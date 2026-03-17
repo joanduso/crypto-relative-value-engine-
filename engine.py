@@ -24,6 +24,7 @@ class EngineRunConfig:
     symbols: tuple[str, ...] = DEFAULT_ALTS
     limit: int = 1000
     interval: str = "1h"
+    feature_config: FeatureConfig | None = None
     csv_path: str = "output/proposed_trades.csv"
     live_mode: bool = False
     paper_trading: bool = False
@@ -75,7 +76,7 @@ def run_engine(config: EngineRunConfig) -> EngineRunResult:
             limit=config.limit,
         )
     )
-    features_df = build_feature_frame(market_df, config.symbols, FeatureConfig())
+    features_df = build_feature_frame(market_df, config.symbols, config.feature_config or FeatureConfig())
     ranked_universe = build_ranked_universe(features_df, config.mode)
     daily_best = (
         ranked_universe.sort_values(["symbol", "confidence_score", "edge_after_fees_pct"], ascending=[True, False, False])

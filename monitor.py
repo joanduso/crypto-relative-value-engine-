@@ -26,6 +26,7 @@ from alerting import (
 )
 from data_ingestion import symbols_from_string
 from engine import DEFAULT_ALTS, EngineRunConfig, run_engine
+from interval_profiles import profile_for_interval
 from portfolio.allocator import allocate_capital
 from risk.risk_engine import RiskLimits, evaluate_risk
 from signal_engine import EngineMode
@@ -39,6 +40,15 @@ logger = logging.getLogger(__name__)
 BINANCE_SPOT_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
 BINANCE_FUTURES_TICKER_URL = "https://fapi.binance.com/fapi/v1/ticker/price"
 COINBASE_SPOT_URL_TEMPLATE = "https://api.coinbase.com/v2/prices/{product_id}/spot"
+
+
+def parse_interval_list(raw_value: str) -> tuple[str, ...]:
+    intervals = tuple(part.strip() for part in raw_value.split(",") if part.strip())
+    return intervals or ("1h",)
+
+
+def interval_slug(interval: str) -> str:
+    return interval.replace("/", "_")
 
 
 def configure_logging() -> None:
@@ -212,6 +222,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--symbols", help="Comma separated altcoin symbols, e.g. XRPUSDT,SOLUSDT")
     parser.add_argument("--interval", default=os.getenv("ENGINE_INTERVAL", "1h"))
+    parser.add_argument("--intervals", default=os.getenv("MONITOR_INTERVALS"))
     parser.add_argument("--limit", type=int, default=int(os.getenv("ENGINE_LIMIT", "1000")))
     parser.add_argument("--poll-minutes", type=int, default=int(os.getenv("POLL_MINUTES", "5")))
     parser.add_argument("--min-confidence", type=float, default=float(os.getenv("ALERT_MIN_CONFIDENCE", "75.0")))
@@ -231,12 +242,102 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def output_path_for_interval(base_path: str, interval: str) -> str:
+    base = Path(base_path)
+    return str(base.with_name(f"{base.stem}_{interval_slug(interval)}{base.suffix}"))
+
+
+def run_interval_iteration(
+    *,
+    now_label: str,
+    args: argparse.Namespace,
+    interval: str,
+    email_config: EmailConfig | None,
+    sent_alerts: dict[str, pd.Timestamp],
+    risk_limits: RiskLimits,
+    signal_qualities: tuple[str, ...],
+) -> dict[str, pd.Timestamp]:
+    profile = profile_for_interval(interval)
+    limit = args.limit if args.limit != 1000 or interval == args.interval else profile.limit
+    csv_path = output_path_for_interval(args.csv_path, interval)
+    state_path = output_path_for_interval(args.state_path, interval)
+    history_path_value = output_path_for_interval(args.history_path, interval)
+    signals_path_value = output_path_for_interval(args.signals_path, interval)
+
+    result = run_engine(
+        EngineRunConfig(
+            mode=EngineMode(args.mode),
+            symbols=symbols_from_string(args.symbols, DEFAULT_ALTS),
+            interval=interval,
+            limit=limit,
+            feature_config=profile.feature_config,
+            csv_path=csv_path,
+            live_mode=False,
+            paper_trading=True,
+            dry_run=True,
+            test_order_mode=True,
+        )
+    )
+    ranked_universe = result.ranked_universe.assign(timeframe=interval)
+    alerts = select_alert_candidates(
+        ranked_universe,
+        min_quality=signal_qualities,
+        min_confidence=args.min_confidence,
+    )
+    history_path = append_daily_alert_snapshot(history_path_value, ranked_universe)
+    new_alerts = filter_new_alerts(
+        alerts_df=alerts,
+        sent_alerts=sent_alerts,
+        cooldown_minutes=args.alert_cooldown_minutes,
+    )
+    best_today = daily_best_alerts(
+        ranked_universe.assign(snapshot_date=pd.Timestamp.utcnow().date().isoformat())
+    )
+    strategy_signals = build_strategy_signals(
+        ranked_universe=result.ranked_universe,
+        funding_threshold=args.funding_threshold,
+        risk_limits=risk_limits,
+        current_drawdown=args.current_drawdown,
+        requested_leverage=args.requested_leverage,
+        total_capital=args.total_capital,
+    )
+    signals_path = Path(signals_path_value)
+    signals_path.parent.mkdir(parents=True, exist_ok=True)
+    strategy_signals.to_csv(signals_path, index=False)
+
+    logger.info(
+        "[%s][%s] corridas=%s propuestas=%s alertas_nuevas=%s mejores_hoy=%s historial=%s strategy_signals=%s limit=%s",
+        now_label,
+        interval,
+        len(result.ranked_universe),
+        len(result.proposals),
+        len(new_alerts),
+        len(best_today),
+        history_path,
+        len(strategy_signals),
+        limit,
+    )
+
+    if email_config is not None and not new_alerts.empty:
+        subject, body = format_alert_email(f"{result.mode.value} {interval}", new_alerts)
+        send_email_alert(email_config, subject, body)
+        sent_alerts = update_sent_alerts(sent_alerts, new_alerts)
+        save_sent_alerts(state_path, sent_alerts)
+        logger.info("[%s][%s] email enviado a %s", now_label, interval, email_config.to_email)
+
+    return sent_alerts
+
+
 def main() -> None:
     configure_logging()
     args = parse_args()
     email_config = email_config_from_env()
-    sent_alerts = load_sent_alerts(args.state_path)
     signal_qualities = parse_quality_list(args.qualities)
+    intervals = parse_interval_list(args.intervals or args.interval)
+    sent_alerts_by_interval = {
+        interval: load_sent_alerts(output_path_for_interval(args.state_path, interval))
+        for interval in intervals
+    }
     risk_limits = RiskLimits(
         max_position_size=args.max_position_size,
         max_daily_drawdown=args.max_daily_drawdown,
@@ -246,69 +347,33 @@ def main() -> None:
     if email_config is None:
         logger.info("Email alerts disabled: SMTP env vars are not configured.")
 
+    next_run_by_interval = {interval: 0.0 for interval in intervals}
+
     while True:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        try:
-            result = run_engine(
-                EngineRunConfig(
-                    mode=EngineMode(args.mode),
-                    symbols=symbols_from_string(args.symbols, DEFAULT_ALTS),
-                    interval=args.interval,
-                    limit=args.limit,
-                    csv_path=args.csv_path,
-                    live_mode=False,
-                    paper_trading=True,
-                    dry_run=True,
-                    test_order_mode=True,
+        current_time = time.time()
+        ran_cycle = False
+        for interval in intervals:
+            profile = profile_for_interval(interval)
+            if current_time < next_run_by_interval[interval]:
+                continue
+            ran_cycle = True
+            try:
+                sent_alerts_by_interval[interval] = run_interval_iteration(
+                    now_label=now,
+                    args=args,
+                    interval=interval,
+                    email_config=email_config,
+                    sent_alerts=sent_alerts_by_interval[interval],
+                    risk_limits=risk_limits,
+                    signal_qualities=signal_qualities,
                 )
-            )
-            alerts = select_alert_candidates(
-                result.ranked_universe,
-                min_quality=signal_qualities,
-                min_confidence=args.min_confidence,
-            )
-            history_path = append_daily_alert_snapshot(args.history_path, result.ranked_universe)
-            new_alerts = filter_new_alerts(
-                alerts_df=alerts,
-                sent_alerts=sent_alerts,
-                cooldown_minutes=args.alert_cooldown_minutes,
-            )
-            best_today = daily_best_alerts(
-                result.ranked_universe.assign(snapshot_date=pd.Timestamp.utcnow().date().isoformat())
-            )
-            strategy_signals = build_strategy_signals(
-                ranked_universe=result.ranked_universe,
-                funding_threshold=args.funding_threshold,
-                risk_limits=risk_limits,
-                current_drawdown=args.current_drawdown,
-                requested_leverage=args.requested_leverage,
-                total_capital=args.total_capital,
-            )
-            signals_path = Path(args.signals_path)
-            signals_path.parent.mkdir(parents=True, exist_ok=True)
-            strategy_signals.to_csv(signals_path, index=False)
+            except Exception as exc:
+                logger.exception("[%s][%s] error en monitor: %s", now, interval, exc)
+            next_run_by_interval[interval] = time.time() + max(profile.poll_minutes, 1) * 60
 
-            logger.info(
-                "[%s] corridas=%s propuestas=%s alertas_nuevas=%s mejores_hoy=%s historial=%s strategy_signals=%s",
-                now,
-                len(result.ranked_universe),
-                len(result.proposals),
-                len(new_alerts),
-                len(best_today),
-                history_path,
-                len(strategy_signals),
-            )
-
-            if email_config is not None and not new_alerts.empty:
-                subject, body = format_alert_email(result.mode.value, new_alerts)
-                send_email_alert(email_config, subject, body)
-                sent_alerts = update_sent_alerts(sent_alerts, new_alerts)
-                save_sent_alerts(args.state_path, sent_alerts)
-                logger.info("[%s] email enviado a %s", now, email_config.to_email)
-        except Exception as exc:
-            logger.exception("[%s] error en monitor: %s", now, exc)
-
-        time.sleep(max(args.poll_minutes, 1) * 60)
+        if not ran_cycle:
+            time.sleep(30)
 
 
 if __name__ == "__main__":

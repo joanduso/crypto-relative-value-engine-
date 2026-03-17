@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Crypto RV Mobile</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='mobile_dashboard.css') }}">
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Railway Mobile Tracker</p>
+        <h1>Crypto Relative Value Engine</h1>
+        <p class="subtitle">Vista móvil para seguir oportunidades, señales y el pulso del engine desde el celular.</p>
+      </div>
+      <div class="hero-meta">
+        <span class="pill">Actualizado: {{ summary.updated_at }}</span>
+        <span class="pill">Top: {{ summary.top_symbol }} / {{ summary.top_score }}</span>
+      </div>
+    </section>
+
+    <section class="summary-grid">
+      <article class="summary-card">
+        <span class="label">Oportunidades</span>
+        <strong>{{ summary.latest_count }}</strong>
+      </article>
+      <article class="summary-card">
+        <span class="label">Histórico</span>
+        <strong>{{ summary.history_count }}</strong>
+      </article>
+      <article class="summary-card">
+        <span class="label">Signals</span>
+        <strong>{{ summary.signals_count }}</strong>
+      </article>
+      <article class="summary-card">
+        <span class="label">Mix</span>
+        <strong>L {{ summary.direction_mix["LONG"] }} / S {{ summary.direction_mix["SHORT"] }}</strong>
+      </article>
+    </section>
+
+    <section class="filters">
+      <form method="get" class="filters-form">
+        <label>
+          <span>Dirección</span>
+          <select name="direction">
+            <option value="" {% if not filters.direction %}selected{% endif %}>Todas</option>
+            <option value="LONG" {% if filters.direction == "LONG" %}selected{% endif %}>LONG</option>
+            <option value="SHORT" {% if filters.direction == "SHORT" %}selected{% endif %}>SHORT</option>
+          </select>
+        </label>
+        <label>
+          <span>Score mín.</span>
+          <input type="number" step="1" name="min_score" value="{{ filters.min_score }}" placeholder="70">
+        </label>
+        <label>
+          <span>Confidence mín.</span>
+          <input type="number" step="1" name="min_confidence" value="{{ filters.min_confidence }}" placeholder="60">
+        </label>
+        <label>
+          <span>Timeframe</span>
+          <select name="timeframe">
+            <option value="" {% if not filters.timeframe %}selected{% endif %}>Todos</option>
+            <option value="15m" {% if filters.timeframe == "15m" %}selected{% endif %}>15m</option>
+            <option value="1h" {% if filters.timeframe == "1h" %}selected{% endif %}>1h</option>
+            <option value="4h" {% if filters.timeframe == "4h" %}selected{% endif %}>4h</option>
+          </select>
+        </label>
+        <label>
+          <span>Calidad</span>
+          <input type="text" name="quality" value="{{ filters.quality }}" placeholder="A1">
+        </label>
+        <label>
+          <span>Límite</span>
+          <input type="number" step="1" name="limit" value="{{ filters.limit }}" placeholder="50">
+        </label>
+        <label class="checkbox">
+          <input type="checkbox" name="passed_only" value="true" {% if filters.passed_only %}checked{% endif %}>
+          <span>Solo aprobadas</span>
+        </label>
+        <button type="submit">Aplicar</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Top oportunidades</h2>
+        <a href="/api/opportunities" target="_blank" rel="noreferrer">JSON</a>
+      </div>
+      {% if opportunities %}
+        <div class="card-stack">
+          {% for item in opportunities %}
+            <article class="opportunity-card {{ item.direction | lower }}">
+              <div class="row">
+                <div>
+                  <h3>{{ item.symbol }}</h3>
+                  <p>{{ item.timestamp }} · {{ item.timeframe }}</p>
+                </div>
+                <div class="badge-group">
+                  <span class="badge direction">{{ item.direction }}</span>
+                  <span class="badge quality">{{ item.quality }}</span>
+                </div>
+              </div>
+              <div class="metrics">
+                <div><span>Score</span><strong>{{ item.score }}</strong></div>
+                <div><span>Confidence</span><strong>{{ item.confidence }}</strong></div>
+                <div><span>Entry</span><strong>{{ item.entry }}</strong></div>
+                <div><span>Precio</span><strong>{{ item.price }}</strong></div>
+                <div><span>Dev %</span><strong>{{ item.deviation_pct }}</strong></div>
+                <div><span>Z-score</span><strong>{{ item.z_score }}</strong></div>
+                <div><span>Edge fees</span><strong>{{ item.edge_after_fees_pct }}</strong></div>
+                <div><span>SL / TP</span><strong>{{ item.stop_loss }} / {{ item.take_profit }}</strong></div>
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty">No hay oportunidades con esos filtros.</p>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Histórico reciente</h2>
+        <a href="/api/history" target="_blank" rel="noreferrer">JSON</a>
+      </div>
+      {% if history %}
+        <div class="mini-list">
+          {% for item in history %}
+            <article class="mini-card">
+              <div>
+                <strong>{{ item.symbol }}</strong>
+                <span>{{ item.timestamp }} · {{ item.timeframe }}</span>
+              </div>
+              <div>
+                <span>{{ item.direction }}</span>
+                <strong>{{ item.score }}</strong>
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty">No hay histórico todavía.</p>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Strategy signals</h2>
+        <a href="/api/signals" target="_blank" rel="noreferrer">JSON</a>
+      </div>
+      {% if signals %}
+        <div class="card-stack compact">
+          {% for item in signals %}
+            <article class="signal-card">
+              <div class="row">
+                <div>
+                  <h3>{{ item.symbol }}</h3>
+                  <p>{{ item.strategy }} · {{ item.timeframe }}</p>
+                </div>
+                <span class="badge">{{ item.signal }}</span>
+              </div>
+              <div class="metrics">
+                <div><span>Risk</span><strong>{{ item.risk_decision }}</strong></div>
+                <div><span>Capital</span><strong>{{ item.allocated_capital }}</strong></div>
+                <div><span>Posición</span><strong>{{ item.approved_position_size }}</strong></div>
+                <div><span>Leverage</span><strong>{{ item.approved_leverage }}</strong></div>
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty">No hay señales exportadas todavía.</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>
