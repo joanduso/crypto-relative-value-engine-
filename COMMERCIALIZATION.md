@@ -106,3 +106,9 @@ Monetizacion:
 5. Añadir auth basica.
 6. Preparar landing + pricing + demo data.
 7. Cerrar piloto con 3 a 5 usuarios.
+
+## Technical blueprint
+
+La separacion recomendada entre consola interna y producto web esta en:
+
+- `WEB_PRODUCT_ARCHITECTURE.md`
