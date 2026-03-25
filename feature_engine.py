@@ -19,6 +19,17 @@ class FeatureConfig:
     volatility_window: int = VOL_WINDOW
 
 
+def _rsi(series: pd.Series, window: int = 14) -> pd.Series:
+    delta = series.diff()
+    gains = delta.clip(lower=0.0)
+    losses = -delta.clip(upper=0.0)
+    avg_gain = gains.ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
+    avg_loss = losses.ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
+    rs = avg_gain / avg_loss.replace(0.0, np.nan)
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    return rsi.fillna(50.0)
+
+
 def _rolling_regression(
     log_alt: pd.Series,
     log_btc: pd.Series,
@@ -68,6 +79,9 @@ def build_feature_frame(
 ) -> pd.DataFrame:
     cfg = config or FeatureConfig()
     pivot_close = market_df.pivot(index="timestamp", columns="symbol", values="close").sort_index()
+    pivot_open = market_df.pivot(index="timestamp", columns="symbol", values="open").sort_index()
+    pivot_high = market_df.pivot(index="timestamp", columns="symbol", values="high").sort_index()
+    pivot_low = market_df.pivot(index="timestamp", columns="symbol", values="low").sort_index()
     pivot_volume = market_df.pivot(index="timestamp", columns="symbol", values="quote_volume").sort_index()
     funding = (
         market_df.sort_values("timestamp")
@@ -85,6 +99,9 @@ def build_feature_frame(
             {
                 "timestamp": pivot_close.index,
                 "symbol": symbol,
+                "alt_open": pivot_open[symbol],
+                "alt_high": pivot_high[symbol],
+                "alt_low": pivot_low[symbol],
                 "alt_price": pivot_close[symbol],
                 "btc_price": pivot_close["BTCUSDT"],
                 "eth_price": pivot_close["ETHUSDT"],
@@ -108,7 +125,11 @@ def build_feature_frame(
         subset["fair_value"] = np.exp(subset["predicted_log_price"])
         subset["spread"] = subset["log_alt"] - subset["beta_btc"] * subset["log_btc"] - subset["beta_eth"] * subset["log_eth"]
         subset["residual_log"] = subset["log_alt"] - subset["predicted_log_price"]
-        zscore_min_periods = min(cfg.zscore_window, max(24, cfg.zscore_window // 3))
+        available_residual_points = max(len(subset) - cfg.regression_window + 1, 1)
+        zscore_min_periods = min(
+            cfg.zscore_window,
+            max(24, min(available_residual_points, cfg.zscore_window // 3)),
+        )
         vol_min_periods = min(cfg.volatility_window, 12)
         stability_min_periods = min(cfg.stability_window, 12)
         subset["residual_mean"] = subset["residual_log"].rolling(cfg.zscore_window, min_periods=zscore_min_periods).mean()
@@ -117,6 +138,32 @@ def build_feature_frame(
         subset["deviation_pct"] = (subset["alt_price"] / subset["fair_value"] - 1.0) * 100.0
         subset["returns"] = subset["alt_price"].pct_change()
         subset["realized_volatility"] = subset["returns"].rolling(cfg.volatility_window, min_periods=vol_min_periods).std(ddof=0) * np.sqrt(24 * 365)
+        subset["alt_ema_20"] = subset["alt_price"].ewm(span=20, adjust=False).mean()
+        subset["alt_ema_50"] = subset["alt_price"].ewm(span=50, adjust=False).mean()
+        subset["alt_rsi_14"] = _rsi(subset["alt_price"], 14)
+        subset["alt_ema_20_slope_pct"] = subset["alt_ema_20"].pct_change(3) * 100.0
+        subset["reclaim_ema_20"] = (
+            (subset["alt_price"] > subset["alt_ema_20"])
+            & (subset["alt_price"].shift(1) <= subset["alt_ema_20"].shift(1))
+        )
+        subset["breakout_5_pct"] = (
+            subset["alt_price"] / subset["alt_price"].rolling(5, min_periods=5).max().shift(1) - 1.0
+        ) * 100.0
+        subset["higher_low_3"] = (
+            subset["alt_price"].rolling(3, min_periods=3).min()
+            > subset["alt_price"].rolling(3, min_periods=3).min().shift(3)
+        )
+        subset["short_term_momentum_3"] = subset["returns"].rolling(3, min_periods=3).sum()
+        subset["micro_reversal_score"] = (
+            subset["reclaim_ema_20"].fillna(False).astype(int)
+            + (subset["alt_price"] > subset["alt_ema_20"]).fillna(False).astype(int)
+            + (subset["alt_ema_20"] > subset["alt_ema_50"]).fillna(False).astype(int)
+            + (subset["short_term_momentum_3"] > 0).fillna(False).astype(int)
+            + (subset["breakout_5_pct"] > 0).fillna(False).astype(int)
+            + (subset["alt_rsi_14"] > 52).fillna(False).astype(int)
+            + (subset["alt_ema_20_slope_pct"] > 0).fillna(False).astype(int)
+            + subset["higher_low_3"].fillna(False).astype(int)
+        )
         subset["spread_abs_change"] = subset["residual_log"].diff().abs()
         stability_raw = subset["spread_abs_change"].rolling(cfg.stability_window, min_periods=stability_min_periods).mean()
         subset["spread_stability_score"] = (1.0 / (1.0 + stability_raw * 100.0)).clip(lower=0.0, upper=1.0)

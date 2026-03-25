@@ -7,6 +7,16 @@ from pathlib import Path
 import pandas as pd
 from flask import Flask, jsonify, render_template, request
 
+from interval_profiles import profile_for_interval
+from news_engine import news_comment
+from quant_engine import (
+    apply_risk_management,
+    build_opportunity_table,
+    build_trade_setups,
+    load_monitor_latest_family,
+    select_portfolio,
+)
+
 
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE_DIR / "output"
@@ -97,6 +107,10 @@ def _apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     if quality and "signal_quality" in out.columns:
         out = out.loc[out["signal_quality"].astype(str).str.upper() == quality]
 
+    execution_status = request.args.get("execution_status", "").strip().upper()
+    if execution_status and "execution_status" in out.columns:
+        out = out.loc[out["execution_status"].astype(str).str.upper() == execution_status]
+
     timeframe = request.args.get("timeframe", "").strip().lower()
     if timeframe and "timeframe" in out.columns:
         out = out.loc[out["timeframe"].astype(str).str.lower() == timeframe]
@@ -145,8 +159,21 @@ def _opportunity_cards(df: pd.DataFrame) -> list[dict[str, object]]:
                 "symbol": _value_or_dash(row, "symbol"),
                 "direction": _value_or_dash(row, "suggested_direction"),
                 "quality": _value_or_dash(row, "signal_quality"),
+                "base_quality": _value_or_dash(row, "base_signal_quality"),
+                "execution_status": _value_or_dash(row, "execution_status"),
+                "market_regime": _value_or_dash(row, "btc_regime"),
                 "timeframe": _value_or_dash(row, "timeframe"),
                 "score": _value_or_dash(row, "market_opportunity_score"),
+                "base_score": _value_or_dash(row, "base_market_opportunity_score"),
+                "pre_news_score": _value_or_dash(row, "pre_news_market_score"),
+                "news_impact_score": _value_or_dash(row, "news_impact_score"),
+                "news_bias": _value_or_dash(row, "news_bias"),
+                "news_event_count": _value_or_dash(row, "news_event_count"),
+                "news_comment": _value_or_dash(row, "news_comment") if "news_comment" in row else news_comment(
+                    row.get("news_impact_score"),
+                    row.get("news_event_count"),
+                    row.get("news_bias"),
+                ),
                 "confidence": _value_or_dash(row, "confidence_score"),
                 "entry": _value_or_dash(row, "suggested_entry"),
                 "price": _value_or_dash(row, "current_price"),
@@ -177,6 +204,8 @@ def _signal_cards(df: pd.DataFrame) -> list[dict[str, object]]:
                 "allocated_capital": _value_or_dash(row, "allocated_capital"),
                 "approved_position_size": _value_or_dash(row, "approved_position_size"),
                 "approved_leverage": _value_or_dash(row, "approved_leverage"),
+                "directional_score": _value_or_dash(row, "directional_score"),
+                "market_regime": _value_or_dash(row, "market_regime"),
             }
         )
     return cards
@@ -203,6 +232,20 @@ def _summary(latest_df: pd.DataFrame, history_df: pd.DataFrame, signals_df: pd.D
         direction_mix["LONG"] = int(counts.get("LONG", 0))
         direction_mix["SHORT"] = int(counts.get("SHORT", 0))
 
+    timeframe_coverage: list[str] = []
+    timeframe_status: list[dict[str, object]] = []
+    if not latest_df.empty and "timeframe" in latest_df.columns:
+        timeframe_coverage = sorted({str(value) for value in latest_df["timeframe"].dropna().tolist()})
+    for timeframe in ("15m", "1h", "4h"):
+        frame = latest_df.loc[latest_df["timeframe"].astype(str) == timeframe] if not latest_df.empty and "timeframe" in latest_df.columns else pd.DataFrame()
+        timeframe_status.append(
+            {
+                "timeframe": timeframe,
+                "rows": int(len(frame)),
+                "state": "active" if not frame.empty else "empty",
+            }
+        )
+
     return {
         "latest_count": latest_count,
         "history_count": history_count,
@@ -211,6 +254,41 @@ def _summary(latest_df: pd.DataFrame, history_df: pd.DataFrame, signals_df: pd.D
         "top_score": top_score,
         "updated_at": updated_at,
         "direction_mix": direction_mix,
+        "timeframe_coverage": timeframe_coverage,
+        "timeframe_status": timeframe_status,
+    }
+
+
+def _dashboard_guide() -> dict[str, object]:
+    profiles = {}
+    for timeframe in ("15m", "1h", "4h"):
+        profile = profile_for_interval(timeframe)
+        profiles[timeframe] = {
+            "limit": profile.limit,
+            "poll_minutes": profile.poll_minutes,
+            "regression_window": profile.feature_config.regression_window,
+            "zscore_window": profile.feature_config.zscore_window,
+            "stability_window": profile.feature_config.stability_window,
+            "volatility_window": profile.feature_config.volatility_window,
+        }
+
+    return {
+        "opp_score_formula": "0.4 * base_score_normalized + 0.3 * alignment_score + 0.2 * volatility_score + 0.1 * liquidity_score",
+        "alignment_notes": [
+            "100 = 15m, 1h y 4h alineados en la misma direccion",
+            "75 = 2 timeframes alineados",
+            "55 = solo 1 timeframe claro",
+            "45 = mezcla de direcciones con mayoria parcial",
+            "20 = muy poca confirmacion",
+        ],
+        "rr_formula": "RR = 2.0 fijo en el quant trade setup actual",
+        "entry_note": "Entry en Top oportunidades usa current_price del timeframe dominante seleccionado por el agregador.",
+        "dev_note": "Dev % = (precio actual / fair value - 1) * 100. Negativo suele favorecer LONG; positivo suele favorecer SHORT.",
+        "edge_note": "Edge fees = abs(dev %) - fee_bps. Mide cuanto edge queda despues de costos aproximados.",
+        "news_note": "News impact suma o resta hasta 15 puntos sobre el market score base segun fuente, severidad, confianza, relevancia, recencia y confirmacion de mercado.",
+        "regime_note": "Regime usa BTC como proxy macro: trending_bullish, trending_bearish o range segun EMA50/200 4h, pendiente y directional score.",
+        "profiles": profiles,
+        "timeframe_note": "15m se usa para timing, 1h para setup y 4h para contexto. Hoy el motor no corre 5m.",
     }
 
 
@@ -219,6 +297,17 @@ def _prepare_tables() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     history_df = _normalize_frame(_load_csv_family(DAILY_HISTORY_PATH))
     signals_df = _normalize_frame(_load_csv_family(STRATEGY_SIGNALS_PATH))
     return latest_df, history_df, signals_df
+
+
+def _build_quant_opportunities() -> pd.DataFrame:
+    latest_df = load_monitor_latest_family(MONITOR_LATEST_PATH)
+    opportunities = build_opportunity_table(latest_df)
+    trades = build_trade_setups(opportunities)
+    managed = apply_risk_management(trades)
+    portfolio = select_portfolio(managed)
+    if portfolio.empty:
+        return managed
+    return portfolio
 
 
 def _pid_is_running(pid_path: Path) -> bool:
@@ -258,12 +347,27 @@ _start_embedded_monitor_if_enabled()
 @app.get("/")
 def index() -> str:
     latest_df, history_df, signals_df = _prepare_tables()
+    quant_df = _build_quant_opportunities()
     filtered_latest = _apply_filters(latest_df)
     filtered_history = _apply_filters(history_df)
+    classified_latest = filtered_latest.sort_values(
+        ["market_opportunity_score", "confidence_score", "signal_quality"],
+        ascending=[False, False, True],
+        na_position="last",
+    ) if not filtered_latest.empty else filtered_latest
+    timeframe_views = {
+        timeframe: _opportunity_cards(
+            filtered_latest.loc[filtered_latest["timeframe"].astype(str) == timeframe].head(12)
+        ) if not filtered_latest.empty and "timeframe" in filtered_latest.columns else []
+        for timeframe in ("15m", "1h", "4h")
+    }
 
     context = {
         "summary": _summary(latest_df, history_df, signals_df),
-        "opportunities": _opportunity_cards(filtered_latest),
+        "guide": _dashboard_guide(),
+        "opportunities": _quant_cards(quant_df),
+        "classified_opportunities": _opportunity_cards(classified_latest.head(24)),
+        "timeframe_views": timeframe_views,
         "history": _opportunity_cards(filtered_history.head(20)),
         "signals": _signal_cards(signals_df.head(20)),
         "filters": {
@@ -271,6 +375,7 @@ def index() -> str:
             "min_score": request.args.get("min_score", ""),
             "min_confidence": request.args.get("min_confidence", ""),
             "quality": request.args.get("quality", ""),
+            "execution_status": request.args.get("execution_status", ""),
             "timeframe": request.args.get("timeframe", ""),
             "passed_only": request.args.get("passed_only", ""),
             "limit": request.args.get("limit", str(DEFAULT_LIMIT)),
@@ -286,9 +391,11 @@ def health() -> tuple[dict[str, str], int]:
 
 @app.get("/api/opportunities")
 def api_opportunities():
-    latest_df, _, _ = _prepare_tables()
-    filtered_latest = _apply_filters(latest_df)
-    return jsonify(_opportunity_cards(filtered_latest))
+    opportunities_df = _build_quant_opportunities()
+    limit = request.args.get("limit", default=DEFAULT_LIMIT, type=int)
+    if limit is not None and limit > 0:
+        opportunities_df = opportunities_df.head(limit)
+    return jsonify(_quant_cards(opportunities_df))
 
 
 @app.get("/api/history")
@@ -308,6 +415,57 @@ def api_signals():
 def api_summary():
     latest_df, history_df, signals_df = _prepare_tables()
     return jsonify(_summary(latest_df, history_df, signals_df))
+
+
+@app.get("/api/classified-opportunities")
+def api_classified_opportunities():
+    latest_df, _, _ = _prepare_tables()
+    filtered_latest = _apply_filters(latest_df)
+    classified_latest = filtered_latest.sort_values(
+        ["market_opportunity_score", "confidence_score", "signal_quality"],
+        ascending=[False, False, True],
+        na_position="last",
+    ) if not filtered_latest.empty else filtered_latest
+    return jsonify(_opportunity_cards(classified_latest.head(50)))
+
+
+@app.get("/api/timeframe-universe")
+def api_timeframe_universe():
+    latest_df, _, _ = _prepare_tables()
+    filtered_latest = _apply_filters(latest_df)
+    payload = {
+        timeframe: _opportunity_cards(
+            filtered_latest.loc[filtered_latest["timeframe"].astype(str) == timeframe].head(50)
+        ) if not filtered_latest.empty and "timeframe" in filtered_latest.columns else []
+        for timeframe in ("15m", "1h", "4h")
+    }
+    return jsonify(payload)
+
+
+def _quant_cards(df: pd.DataFrame) -> list[dict[str, object]]:
+    cards: list[dict[str, object]] = []
+    if df.empty:
+        return cards
+
+    for _, row in df.iterrows():
+        cards.append(
+            {
+                "timestamp": _format_timestamp(row.get("timestamp")),
+                "symbol": _value_or_dash(row, "symbol"),
+                "direction": _value_or_dash(row, "direction"),
+                "timeframe": _value_or_dash(row, "top_timeframe"),
+                "score": _value_or_dash(row, "opportunity_score"),
+                "alignment_score": _value_or_dash(row, "alignment_score"),
+                "timeframes_confirmed": _value_or_dash(row, "timeframes_confirmed"),
+                "entry": _value_or_dash(row, "entry"),
+                "price": _value_or_dash(row, "current_price"),
+                "stop_loss": _value_or_dash(row, "stop_loss"),
+                "take_profit": _value_or_dash(row, "take_profit"),
+                "risk_reward_ratio": _value_or_dash(row, "risk_reward_ratio"),
+                "position_size_pct": _value_or_dash(row, "position_size_pct"),
+            }
+        )
+    return cards
 
 
 if __name__ == "__main__":

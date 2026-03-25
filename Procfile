@@ -1,1 +1,1 @@
-worker: python monitor.py
+web: gunicorn --bind 0.0.0.0:$PORT mobile_dashboard:app

@@ -5,12 +5,14 @@ import argparse
 from data_ingestion import symbols_from_string
 from engine import DEFAULT_ALTS, EngineRunConfig, run_engine
 from interval_profiles import profile_for_interval
+from presets import apply_preset, preset_names, restore_preset
 from signal_engine import EngineMode
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Dual-mode crypto relative value engine")
     parser.add_argument("--mode", choices=[mode.value for mode in EngineMode], default=EngineMode.COPILOT.value)
+    parser.add_argument("--preset", choices=preset_names(), default="DEFAULT")
     parser.add_argument("--symbols", help="Comma separated altcoin symbols, e.g. XRPUSDT,SOLUSDT")
     parser.add_argument("--limit", type=int, default=1000)
     parser.add_argument("--interval", default="1h")
@@ -23,20 +25,24 @@ def parse_args() -> argparse.Namespace:
 def run() -> None:
     args = parse_args()
     profile = profile_for_interval(args.interval)
-    result = run_engine(
-        EngineRunConfig(
-            mode=EngineMode(args.mode),
-            symbols=symbols_from_string(args.symbols, DEFAULT_ALTS),
-            interval=args.interval,
-            limit=args.limit,
-            feature_config=profile.feature_config,
-            csv_path=args.csv_path,
-            live_mode=args.live_mode,
-            paper_trading=args.paper_trading,
-            dry_run=args.dry_run,
-            test_order_mode=args.test_order_mode,
+    previous_env = apply_preset(args.preset)
+    try:
+        result = run_engine(
+            EngineRunConfig(
+                mode=EngineMode(args.mode),
+                symbols=symbols_from_string(args.symbols, DEFAULT_ALTS),
+                interval=args.interval,
+                limit=args.limit,
+                feature_config=profile.feature_config,
+                csv_path=args.csv_path,
+                live_mode=args.live_mode,
+                paper_trading=args.paper_trading,
+                dry_run=args.dry_run,
+                test_order_mode=args.test_order_mode,
+            )
         )
-    )
+    finally:
+        restore_preset(previous_env)
     print(result.dashboard_text)
     print("")
     print(f"CSV export: {result.csv_path}")

@@ -1,0 +1,6 @@
+Convierte esta idea en un prompt fuerte para Codex.
+Hazme un prompt para analizar BTCUSDT en 4h, 1h y 15m.
+Toma este contexto y devuelveme un prompt listo para ChatGPT.
+Dame 3 variantes del mismo prompt: corta, robusta y experta.
+Mejora este prompt sin cambiar la intencion.
+Hazme un prompt para revisar un bug y proponer fix con pruebas.

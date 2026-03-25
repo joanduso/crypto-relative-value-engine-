@@ -77,6 +77,9 @@ def klines_to_market_df(symbol: str, klines: list[list]) -> pd.DataFrame:
         {
             "timestamp": pd.to_datetime(raw[0], unit="ms", utc=True),
             "symbol": symbol,
+            "open": pd.to_numeric(raw[1], errors="coerce"),
+            "high": pd.to_numeric(raw[2], errors="coerce"),
+            "low": pd.to_numeric(raw[3], errors="coerce"),
             "close": pd.to_numeric(raw[4], errors="coerce"),
             "volume": pd.to_numeric(raw[5], errors="coerce"),
             "quote_volume": pd.to_numeric(raw[7], errors="coerce"),

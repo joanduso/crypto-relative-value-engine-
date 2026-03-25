@@ -14,8 +14,35 @@ from typing import Iterable
 import pandas as pd
 import requests
 
+from news_engine import news_comment
+
 
 logger = logging.getLogger(__name__)
+
+_LOCAL_ENV_LOADED = False
+
+
+def _load_local_env() -> None:
+    global _LOCAL_ENV_LOADED
+    if _LOCAL_ENV_LOADED:
+        return
+
+    env_path = Path(".env.local")
+    if not env_path.exists():
+        _LOCAL_ENV_LOADED = True
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+    _LOCAL_ENV_LOADED = True
 
 
 @dataclass(frozen=True)
@@ -30,6 +57,13 @@ class EmailConfig:
     use_tls: bool = True
 
 
+@dataclass(frozen=True)
+class TelegramConfig:
+    bot_token: str
+    chat_id: str
+    api_base: str = "https://api.telegram.org"
+
+
 class IPv4FirstSMTP(smtplib.SMTP):
     def _get_socket(self, host: str, port: int, timeout: float):
         return _create_socket(host, port, timeout)
@@ -42,6 +76,7 @@ class IPv4FirstSMTP_SSL(smtplib.SMTP_SSL):
 
 
 def email_config_from_env() -> EmailConfig | None:
+    _load_local_env()
     resend_api_key = os.getenv("RESEND_API_KEY")
     host = os.getenv("SMTP_HOST")
     port = os.getenv("SMTP_PORT")
@@ -73,6 +108,15 @@ def email_config_from_env() -> EmailConfig | None:
         to_email=to_email,
         use_tls=os.getenv("SMTP_USE_TLS", "true").lower() != "false",
     )
+
+
+def telegram_config_from_env() -> TelegramConfig | None:
+    _load_local_env()
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not bot_token or not chat_id:
+        return None
+    return TelegramConfig(bot_token=bot_token, chat_id=chat_id)
 
 
 def _create_socket(host: str, port: int, timeout: float) -> socket.socket:
@@ -110,9 +154,17 @@ def select_alert_candidates(
     if ranked_universe.empty:
         return ranked_universe.copy()
     candidates = ranked_universe.copy()
+    rr = pd.to_numeric(candidates.get("risk_reward_ratio"), errors="coerce").fillna(0.0)
+    ev = pd.to_numeric(candidates.get("expected_value_pct"), errors="coerce").fillna(0.0)
+    execution_allowed = candidates.get("execution_allowed", True)
+    if not isinstance(execution_allowed, pd.Series):
+        execution_allowed = pd.Series(execution_allowed, index=candidates.index)
     return candidates.loc[
         candidates["passes_filters"]
+        & execution_allowed.astype(bool)
         & candidates["signal_quality"].isin(min_quality)
+        & (rr >= 1.25)
+        & (ev > 0.0)
         & (
             (candidates["confidence_score"] >= min_confidence)
             | (candidates["market_opportunity_score"] >= 76.0)
@@ -122,6 +174,10 @@ def select_alert_candidates(
 
 def build_alert_key(row: pd.Series) -> str:
     return f"{row['symbol']}|{row['suggested_direction']}|{row['signal_quality']}"
+
+
+def build_symbol_direction_key(row: pd.Series) -> str:
+    return f"{row['symbol']}|{row['suggested_direction']}"
 
 
 def load_sent_alerts(path: str | Path) -> dict[str, pd.Timestamp]:
@@ -173,7 +229,12 @@ def filter_new_alerts(
     for _, row in alerts_df.iterrows():
         alert_key = build_alert_key(row)
         last_sent = sent_alerts.get(alert_key)
-        if last_sent is None or (reference_now - last_sent) >= cooldown:
+        symbol_direction_key = build_symbol_direction_key(row)
+        last_symbol_direction = sent_alerts.get(symbol_direction_key)
+        quality = str(row.get("signal_quality", "")).upper()
+        quality_upgrade = quality in {"A1", "A2"} and last_symbol_direction is None
+
+        if quality_upgrade or last_sent is None or (reference_now - last_sent) >= cooldown:
             fresh_rows.append(row)
 
     if not fresh_rows:
@@ -195,6 +256,7 @@ def update_sent_alerts(
 
     for _, row in alerts_df.iterrows():
         sent_alerts[build_alert_key(row)] = timestamp
+        sent_alerts[build_symbol_direction_key(row)] = timestamp
     return sent_alerts
 
 
@@ -214,16 +276,130 @@ def format_alert_email(mode_name: str, alerts_df: pd.DataFrame) -> tuple[str, st
         timeframe = f" | tf={row.timeframe}" if hasattr(row, "timeframe") else ""
         stop_loss = f"{row.suggested_stop_loss:.4f}" if hasattr(row, "suggested_stop_loss") else "n/a"
         take_profit = f"{row.suggested_take_profit:.4f}" if hasattr(row, "suggested_take_profit") else "n/a"
+        regime = f" | regime={row.btc_regime}" if hasattr(row, "btc_regime") else ""
+        base_score = f"{row.base_market_opportunity_score:.1f}" if hasattr(row, "base_market_opportunity_score") else "n/a"
+        base_quality = getattr(row, "base_signal_quality", "n/a")
+        exec_status = getattr(row, "execution_status", "n/a")
+        rr = f"{row.risk_reward_ratio:.2f}" if hasattr(row, "risk_reward_ratio") else "n/a"
+        ev = f"{row.expected_value_pct:.2f}%" if hasattr(row, "expected_value_pct") else "n/a"
+        win_rate = f"{row.effective_win_rate_pct:.1f}%" if hasattr(row, "effective_win_rate_pct") else f"{row.implied_win_rate_pct:.1f}%" if hasattr(row, "implied_win_rate_pct") else "n/a"
+        win_source = getattr(row, "win_rate_source", "n/a")
         lines.append(
             (
-                f"{row.symbol} | {row.suggested_direction} | {row.signal_quality}{timeframe} | "
+                f"{row.symbol} | {row.suggested_direction} | q={row.signal_quality} base_q={base_quality} exec={exec_status}{timeframe}{regime} | "
                 f"precio={row.current_price:.4f} | fair={row.expected_fair_value:.4f} | "
                 f"entrada={row.suggested_entry:.4f} | stop={stop_loss} | take={take_profit} | "
                 f"desvio={row.deviation_pct:.2f}% | z={row.z_score:.2f} | "
-                f"score={row.confidence_score:.1f}"
+                f"score={row.confidence_score:.1f} | mscore={row.market_opportunity_score:.1f} base={base_score} | "
+                f"rr={rr} | ev={ev} | win={win_rate} src={win_source}"
             )
         )
     return subject, "\n".join(lines)
+
+
+def format_alert_telegram(mode_name: str, alerts_df: pd.DataFrame) -> str:
+    header = f"[Crypto RV] {len(alerts_df)} alertas nuevas en {mode_name}"
+    lines = [header, ""]
+    for idx, row in enumerate(alerts_df.itertuples(index=False), start=1):
+        timeframe = f" tf={row.timeframe}" if hasattr(row, "timeframe") else ""
+        stop_loss = f"{row.suggested_stop_loss:.4f}" if hasattr(row, "suggested_stop_loss") else "n/a"
+        take_profit = f"{row.suggested_take_profit:.4f}" if hasattr(row, "suggested_take_profit") else "n/a"
+        regime = f" regime={row.btc_regime}" if hasattr(row, "btc_regime") else ""
+        base_score = f"{row.base_market_opportunity_score:.1f}" if hasattr(row, "base_market_opportunity_score") else "n/a"
+        base_quality = getattr(row, "base_signal_quality", "n/a")
+        exec_status = getattr(row, "execution_status", "n/a")
+        rr = f"{row.risk_reward_ratio:.2f}" if hasattr(row, "risk_reward_ratio") else "n/a"
+        ev = f"{row.expected_value_pct:.2f}%" if hasattr(row, "expected_value_pct") else "n/a"
+        win_rate = f"{row.effective_win_rate_pct:.1f}%" if hasattr(row, "effective_win_rate_pct") else f"{row.implied_win_rate_pct:.1f}%" if hasattr(row, "implied_win_rate_pct") else "n/a"
+        win_source = getattr(row, "win_rate_source", "n/a")
+        news_impact = getattr(row, "news_impact_score", 0.0)
+        news_bias = getattr(row, "news_bias", "NEUTRAL")
+        news_count = getattr(row, "news_event_count", 0)
+        news_note = news_comment(news_impact, news_count, news_bias)
+        lines.append(
+            (
+                f"{idx}. {row.symbol} {row.suggested_direction} | q={row.signal_quality} base={base_quality} | exec={exec_status}{timeframe}{regime}\n"
+                f"precio={row.current_price:.4f} fair={row.expected_fair_value:.4f} entrada={row.suggested_entry:.4f}\n"
+                f"desvio={row.deviation_pct:.2f}% z={row.z_score:.2f} | conf={row.confidence_score:.1f} mscore={row.market_opportunity_score:.1f} base={base_score}\n"
+                f"stop={stop_loss} take={take_profit} | rr={rr} ev={ev} win={win_rate} src={win_source}\n"
+                f"news={news_bias} impact={news_impact:.2f} events={news_count} | {news_note}"
+            )
+        )
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def format_top_opportunities_telegram(mode_name: str, opportunities_df: pd.DataFrame) -> str:
+    header = f"[Crypto RV] Top oportunidades en {mode_name}"
+    lines = [header, ""]
+    for idx, row in enumerate(opportunities_df.itertuples(index=False), start=1):
+        lines.append(
+            (
+                f"{idx}. {row.symbol} {row.direction} | q={getattr(row, 'signal_quality', 'n/a')} | opp={row.opportunity_score:.2f}\n"
+                f"align={row.alignment_score:.1f} tf={row.timeframes_confirmed} | "
+                f"entry={row.entry:.4f} stop={row.stop_loss:.4f} take={row.take_profit:.4f}\n"
+                f"rr={row.risk_reward_ratio:.1f} | size={row.position_size_pct:.2f}%"
+            )
+        )
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def format_market_summary_telegram(mode_name: str, opportunities_df: pd.DataFrame) -> str:
+    header = f"[Crypto RV] Resumen de mercado en {mode_name}"
+    lines = [header, ""]
+    for row in opportunities_df.itertuples(index=False):
+        lines.append(
+            (
+                f"{row.symbol} {row.direction} | quality={getattr(row, 'signal_quality', 'n/a')} | "
+                f"opp={row.opportunity_score:.2f} | tf={row.timeframes_confirmed}"
+            )
+        )
+    return "\n".join(lines).strip()
+
+
+def format_strategy_risk_telegram(mode_name: str, signals_df: pd.DataFrame) -> str:
+    header = f"[Crypto RV] Risk summary en {mode_name}"
+    if signals_df.empty:
+        return header
+
+    normalized = signals_df.copy()
+    decisions = normalized.get("risk_decision", pd.Series(dtype=object)).astype(str).str.upper()
+    allow_count = int((decisions == "ALLOW").sum())
+    reduce_count = int((decisions == "REDUCE_POSITION").sum())
+    stop_count = int((decisions == "STOP_TRADING").sum())
+
+    lines = [header, f"ALLOW={allow_count} REDUCE={reduce_count} STOP={stop_count}", ""]
+    prioritized = normalized.loc[
+        decisions.isin(["STOP_TRADING", "REDUCE_POSITION"])
+    ].copy() if "risk_decision" in normalized.columns else normalized.iloc[0:0].copy()
+    if prioritized.empty:
+        prioritized = normalized.copy()
+
+    for row in prioritized.head(5).itertuples(index=False):
+        lines.append(
+            (
+                f"{row.symbol} {row.strategy} {row.signal} | "
+                f"risk={getattr(row, 'risk_decision', 'n/a')} | "
+                f"reason={getattr(row, 'risk_reason', 'n/a')} | "
+                f"size={getattr(row, 'approved_position_size', 'n/a')} | "
+                f"lev={getattr(row, 'approved_leverage', 'n/a')}"
+            )
+        )
+    return "\n".join(lines).strip()
+
+
+def format_downside_shocks_telegram(mode_name: str, shocks_df: pd.DataFrame) -> str:
+    header = f"[Crypto RV] Caidas fuertes detectadas en {mode_name}"
+    lines = [header, ""]
+    for row in shocks_df.itertuples(index=False):
+        lines.append(
+            (
+                f"{row.symbol} | 15m={row.candle_return_pct:.2f}% | 45m={row.return_3bar_pct:.2f}% | "
+                f"low_from_open={row.low_from_open_pct:.2f}% | vol={row.quote_volume:,.0f}"
+            )
+        )
+    return "\n".join(lines).strip()
 
 
 def append_daily_alert_snapshot(path: str | Path, ranked_universe: pd.DataFrame) -> Path:
@@ -307,3 +483,18 @@ def send_email_alert(config: EmailConfig, subject: str, body: str) -> None:
 
     if last_error is not None:
         raise last_error
+
+
+def send_telegram_alert(config: TelegramConfig, message: str) -> None:
+    session = requests.Session()
+    session.trust_env = False
+    response = session.post(
+        f"{config.api_base}/bot{config.bot_token}/sendMessage",
+        json={
+            "chat_id": config.chat_id,
+            "text": message,
+            "disable_web_page_preview": True,
+        },
+        timeout=30,
+    )
+    response.raise_for_status()

@@ -122,6 +122,57 @@ h1 {
   margin-top: 16px;
 }
 
+.spotlight {
+  background:
+    linear-gradient(135deg, rgba(15, 118, 110, 0.12), rgba(191, 91, 4, 0.08)),
+    var(--panel);
+}
+
+.spotlight-copy {
+  color: var(--muted);
+  font-size: 0.98rem;
+  line-height: 1.5;
+}
+
+.status-grid,
+.timeframe-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.status-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.status-card,
+.timeframe-column {
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.74);
+  padding: 14px;
+}
+
+.status-card span,
+.status-card small {
+  display: block;
+  color: var(--muted);
+}
+
+.status-card strong {
+  display: block;
+  margin: 6px 0 4px;
+  font-size: 1.35rem;
+}
+
+.status-card.active {
+  border-color: rgba(31, 138, 76, 0.35);
+}
+
+.status-card.empty {
+  border-color: rgba(180, 35, 24, 0.22);
+}
+
 .filters-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -224,6 +275,26 @@ h1 {
   background: var(--short);
 }
 
+.execution {
+  color: #fff;
+}
+
+.execution.ok {
+  background: var(--long);
+}
+
+.execution.caution {
+  background: #b86a08;
+}
+
+.execution.high_risk {
+  background: #8b1e3f;
+}
+
+.execution.blocked {
+  background: var(--short);
+}
+
 .metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -259,9 +330,37 @@ h1 {
   color: var(--muted);
 }
 
+.news-note {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  font-size: 0.86rem;
+  line-height: 1.4;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.news-note.bullish {
+  border-color: rgba(31, 138, 76, 0.35);
+  color: #155d33;
+}
+
+.news-note.bearish {
+  border-color: rgba(180, 35, 24, 0.28);
+  color: #8f1d14;
+}
+
+.news-note.neutral {
+  color: var(--muted);
+}
+
 @media (min-width: 768px) {
   .summary-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .timeframe-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .filters-form {

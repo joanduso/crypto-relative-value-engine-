@@ -14,4 +14,4 @@ RUN mkdir -p /app/output
 
 EXPOSE 8080
 
-CMD ["python", "mobile_dashboard.py"]
+CMD ["sh", "-c", "if [ \"$APP_ROLE\" = \"monitor\" ]; then python monitor.py; else gunicorn --bind 0.0.0.0:${PORT:-8080} mobile_dashboard:app; fi"]

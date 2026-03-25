@@ -5,5 +5,7 @@
 __pycache__/
 *.pyc
 output/
+.env.local
+news_events.csv
 .DS_Store
 Thumbs.db

@@ -1,18 +1,22 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 
 from backtest import compare_mode_backtests
+from calibration import calibrate_from_history
 from dashboard import export_proposals_csv, render_terminal_dashboard
 from data_ingestion import DataConfig, fetch_market_data
 from execution_engine import BinanceExecutionEngine, execution_config_from_env
 from feature_engine import FeatureConfig, build_feature_frame
+from news_engine import apply_news_overlay
 from portfolio_manager import PortfolioManager
-from risk_engine import RiskLimits
-from signal_engine import EngineMode, build_opportunity_table, build_ranked_universe
+from regime_engine import apply_regime_overlay
+from risk_engine import RiskLimits, RiskState, attach_trade_plan
+from signal_engine import EngineMode, build_opportunity_table_from_ranked, build_ranked_universe
 
 
 DEFAULT_ALTS = ("XRPUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT", "BNBUSDT", "LTCUSDT", "LINKUSDT", "AVAXUSDT")
@@ -48,7 +52,7 @@ class EngineRunResult:
 
 def mode_risk_limits(mode: EngineMode) -> RiskLimits:
     if mode is EngineMode.AUTO_SAFE:
-        return RiskLimits(
+        base = RiskLimits(
             max_concurrent_positions=2,
             max_daily_loss_pct=0.02,
             max_weekly_drawdown_pct=0.05,
@@ -57,18 +61,41 @@ def mode_risk_limits(mode: EngineMode) -> RiskLimits:
             stop_loss_pct=0.025,
             take_profit_pct=0.05,
         )
+    elif mode is EngineMode.COPILOT_RELAXED:
+        base = RiskLimits(
+            max_concurrent_positions=2,
+            max_daily_loss_pct=0.035,
+            max_weekly_drawdown_pct=0.08,
+            max_risk_per_trade_pct=0.01,
+            max_holding_hours=48,
+            stop_loss_pct=0.0325,
+            take_profit_pct=0.065,
+        )
+    else:
+        base = RiskLimits(
+            max_concurrent_positions=1,
+            max_daily_loss_pct=0.03,
+            max_weekly_drawdown_pct=0.07,
+            max_risk_per_trade_pct=0.01,
+            max_holding_hours=48,
+            stop_loss_pct=0.03,
+            take_profit_pct=0.06,
+        )
+
+    prefix = f"RISK_{mode.value}_"
     return RiskLimits(
-        max_concurrent_positions=1,
-        max_daily_loss_pct=0.03,
-        max_weekly_drawdown_pct=0.07,
-        max_risk_per_trade_pct=0.01,
-        max_holding_hours=48,
-        stop_loss_pct=0.03,
-        take_profit_pct=0.06,
+        max_concurrent_positions=int(os.getenv(f"{prefix}MAX_CONCURRENT_POSITIONS", os.getenv("RISK_MAX_CONCURRENT_POSITIONS", str(base.max_concurrent_positions)))),
+        max_daily_loss_pct=float(os.getenv(f"{prefix}MAX_DAILY_LOSS_PCT", os.getenv("RISK_MAX_DAILY_LOSS_PCT", str(base.max_daily_loss_pct)))),
+        max_weekly_drawdown_pct=float(os.getenv(f"{prefix}MAX_WEEKLY_DRAWDOWN_PCT", os.getenv("RISK_MAX_WEEKLY_DRAWDOWN_PCT", str(base.max_weekly_drawdown_pct)))),
+        max_risk_per_trade_pct=float(os.getenv(f"{prefix}MAX_RISK_PER_TRADE_PCT", os.getenv("RISK_MAX_RISK_PER_TRADE_PCT", str(base.max_risk_per_trade_pct)))),
+        max_holding_hours=int(os.getenv(f"{prefix}MAX_HOLDING_HOURS", os.getenv("RISK_MAX_HOLDING_HOURS", str(base.max_holding_hours)))),
+        stop_loss_pct=float(os.getenv(f"{prefix}STOP_LOSS_PCT", os.getenv("RISK_STOP_LOSS_PCT", str(base.stop_loss_pct)))),
+        take_profit_pct=float(os.getenv(f"{prefix}TAKE_PROFIT_PCT", os.getenv("RISK_TAKE_PROFIT_PCT", str(base.take_profit_pct)))),
     )
 
 
 def run_engine(config: EngineRunConfig) -> EngineRunResult:
+    active_risk_limits = mode_risk_limits(config.mode)
     market_df = fetch_market_data(
         DataConfig(
             symbols=config.symbols,
@@ -78,6 +105,20 @@ def run_engine(config: EngineRunConfig) -> EngineRunResult:
     )
     features_df = build_feature_frame(market_df, config.symbols, config.feature_config or FeatureConfig())
     ranked_universe = build_ranked_universe(features_df, config.mode)
+    ranked_universe, _ = apply_news_overlay(ranked_universe, market_df)
+    ranked_universe, _ = apply_regime_overlay(ranked_universe, market_df, config.mode)
+    ranked_universe, _ = calibrate_from_history(
+        features_df,
+        ranked_universe,
+        mode=config.mode,
+        interval=config.interval,
+        risk_limits=active_risk_limits,
+    )
+    ranked_universe = attach_trade_plan(
+        ranked_universe,
+        limits=active_risk_limits,
+        state=RiskState(),
+    )
     daily_best = (
         ranked_universe.sort_values(["symbol", "confidence_score", "edge_after_fees_pct"], ascending=[True, False, False])
         .groupby("symbol", as_index=False)
@@ -86,9 +127,9 @@ def run_engine(config: EngineRunConfig) -> EngineRunResult:
         if not ranked_universe.empty
         else pd.DataFrame()
     )
-    opportunities = build_opportunity_table(features_df, config.mode)
+    opportunities = build_opportunity_table_from_ranked(ranked_universe, config.mode)
 
-    portfolio = PortfolioManager(limits=mode_risk_limits(config.mode))
+    portfolio = PortfolioManager(limits=active_risk_limits)
     proposals = portfolio.prepare_orders(opportunities)
     proposals = proposals.loc[proposals["risk_checks_passed"]].copy() if not proposals.empty else proposals
 

@@ -28,7 +28,19 @@ class PortfolioManager:
 
     def prepare_orders(self, opportunities: pd.DataFrame) -> pd.DataFrame:
         self.state.open_positions = len(self.positions)
-        planned = attach_trade_plan(opportunities, self.limits, self.state)
+        required_columns = {
+            "suggested_stop_loss",
+            "suggested_take_profit",
+            "suggested_position_size",
+            "risk_checks_passed",
+            "risk_reward_ratio",
+            "expected_value_pct",
+        }
+        planned = (
+            opportunities.copy()
+            if required_columns.issubset(opportunities.columns)
+            else attach_trade_plan(opportunities, self.limits, self.state)
+        )
         if planned.empty:
             return planned
 

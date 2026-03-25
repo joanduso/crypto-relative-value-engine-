@@ -8,9 +8,10 @@ from typing import Iterable, Mapping
 logger = logging.getLogger(__name__)
 
 DEFAULT_WEIGHTS: dict[str, float] = {
-    "funding_arbitrage": 0.4,
-    "basis_trade": 0.35,
-    "cross_exchange": 0.25,
+    "funding_arbitrage": 0.3,
+    "basis_trade": 0.25,
+    "cross_exchange": 0.15,
+    "btc_directional": 0.3,
 }
 
 

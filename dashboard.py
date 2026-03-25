@@ -27,7 +27,7 @@ def render_terminal_dashboard(
     if proposals.empty:
         lines.append("No opportunities passed the active filters.")
     else:
-        lines.append("symbol | current | fair | dev% | z | stability | dir | quality | entry | stop | take | size | confidence")
+        lines.append("symbol | current | fair | dev% | z | stability | dir | quality | entry | stop | take | size | confidence | win% | rr | ev%")
         for row in proposals.itertuples(index=False):
             lines.append(
                 " | ".join(
@@ -45,6 +45,9 @@ def render_terminal_dashboard(
                         _format_float(row.suggested_take_profit, 4),
                         _format_float(row.suggested_position_size, 4),
                         _format_float(row.confidence_score, 1),
+                        _format_float(getattr(row, "effective_win_rate_pct", float("nan")), 1),
+                        _format_float(getattr(row, "risk_reward_ratio", float("nan")), 2),
+                        _format_float(getattr(row, "expected_value_pct", float("nan")), 2),
                     ]
                 )
             )

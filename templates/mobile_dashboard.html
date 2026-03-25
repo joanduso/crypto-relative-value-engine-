@@ -15,11 +15,12 @@
       <div>
         <p class="eyebrow">Railway Mobile Tracker</p>
         <h1>Crypto Relative Value Engine</h1>
-        <p class="subtitle">Vista móvil para seguir oportunidades, señales y el pulso del engine desde el celular.</p>
+        <p class="subtitle">Vista movil para seguir oportunidades, senales y el pulso del engine desde el celular.</p>
       </div>
       <div class="hero-meta">
         <span class="pill">Actualizado: {{ summary.updated_at }}</span>
         <span class="pill">Top: {{ summary.top_symbol }} / {{ summary.top_score }}</span>
+        <span class="pill">Coverage: {{ summary.timeframe_coverage | join(', ') if summary.timeframe_coverage else 'sin timeframes' }}</span>
       </div>
     </section>
 
@@ -29,7 +30,7 @@
         <strong>{{ summary.latest_count }}</strong>
       </article>
       <article class="summary-card">
-        <span class="label">Histórico</span>
+        <span class="label">Historico</span>
         <strong>{{ summary.history_count }}</strong>
       </article>
       <article class="summary-card">
@@ -42,10 +43,33 @@
       </article>
     </section>
 
+    <section class="panel spotlight">
+      <div class="panel-head">
+        <h2>Cobertura de mercado</h2>
+      </div>
+      <p class="spotlight-copy">
+        Timeframes activos: {{ summary.timeframe_coverage | join(', ') if summary.timeframe_coverage else 'ninguno' }}.
+        {% if summary.timeframe_coverage | length < 3 %}
+          Para datos mas ricos del Quant Engine, corre el monitor con `15m,1h,4h`.
+        {% else %}
+          El motor ya esta leyendo confirmacion multi-timeframe completa.
+        {% endif %}
+      </p>
+      <div class="status-grid">
+        {% for status in summary.timeframe_status %}
+          <article class="status-card {{ status.state }}">
+            <span>{{ status.timeframe }}</span>
+            <strong>{{ status.rows }}</strong>
+            <small>{{ status.state }}</small>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+
     <section class="filters">
       <form method="get" class="filters-form">
         <label>
-          <span>Dirección</span>
+          <span>Direccion</span>
           <select name="direction">
             <option value="" {% if not filters.direction %}selected{% endif %}>Todas</option>
             <option value="LONG" {% if filters.direction == "LONG" %}selected{% endif %}>LONG</option>
@@ -53,11 +77,11 @@
           </select>
         </label>
         <label>
-          <span>Score mín.</span>
+          <span>Score min.</span>
           <input type="number" step="1" name="min_score" value="{{ filters.min_score }}" placeholder="70">
         </label>
         <label>
-          <span>Confidence mín.</span>
+          <span>Confidence min.</span>
           <input type="number" step="1" name="min_confidence" value="{{ filters.min_confidence }}" placeholder="60">
         </label>
         <label>
@@ -74,7 +98,17 @@
           <input type="text" name="quality" value="{{ filters.quality }}" placeholder="A1">
         </label>
         <label>
-          <span>Límite</span>
+          <span>Exec</span>
+          <select name="execution_status">
+            <option value="" {% if not filters.execution_status %}selected{% endif %}>Todos</option>
+            <option value="OK" {% if filters.execution_status == "OK" %}selected{% endif %}>OK</option>
+            <option value="CAUTION" {% if filters.execution_status == "CAUTION" %}selected{% endif %}>CAUTION</option>
+            <option value="HIGH_RISK" {% if filters.execution_status == "HIGH_RISK" %}selected{% endif %}>HIGH_RISK</option>
+            <option value="BLOCKED" {% if filters.execution_status == "BLOCKED" %}selected{% endif %}>BLOCKED</option>
+          </select>
+        </label>
+        <label>
+          <span>Limite</span>
           <input type="number" step="1" name="limit" value="{{ filters.limit }}" placeholder="50">
         </label>
         <label class="checkbox">
@@ -83,6 +117,48 @@
         </label>
         <button type="submit">Aplicar</button>
       </form>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Guia Rapida</h2>
+      </div>
+      <div class="metrics">
+        <div><span>Opp score</span><strong>{{ guide.opp_score_formula }}</strong></div>
+        <div><span>RR</span><strong>{{ guide.rr_formula }}</strong></div>
+        <div><span>Entry</span><strong>{{ guide.entry_note }}</strong></div>
+        <div><span>Dev %</span><strong>{{ guide.dev_note }}</strong></div>
+        <div><span>Edge fees</span><strong>{{ guide.edge_note }}</strong></div>
+        <div><span>Regime</span><strong>{{ guide.regime_note }}</strong></div>
+        <div><span>Timeframes</span><strong>{{ guide.timeframe_note }}</strong></div>
+      </div>
+      <div class="mini-list" style="margin-top: 14px;">
+        {% for line in guide.alignment_notes %}
+          <article class="mini-card">
+            <div>
+              <strong>Alignment</strong>
+              <span>{{ line }}</span>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+      <div class="timeframe-grid" style="margin-top: 14px;">
+        {% for timeframe, profile in guide.profiles.items() %}
+          <article class="timeframe-column">
+            <div class="row">
+              <h3>{{ timeframe }}</h3>
+              <span class="pill">{{ profile.limit }} velas</span>
+            </div>
+            <div class="metrics">
+              <div><span>Polling</span><strong>{{ profile.poll_minutes }} min</strong></div>
+              <div><span>Regresion</span><strong>{{ profile.regression_window }}</strong></div>
+              <div><span>Z-score</span><strong>{{ profile.zscore_window }}</strong></div>
+              <div><span>Stability</span><strong>{{ profile.stability_window }}</strong></div>
+              <div><span>Volatility</span><strong>{{ profile.volatility_window }}</strong></div>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
     </section>
 
     <section class="panel">
@@ -101,17 +177,16 @@
                 </div>
                 <div class="badge-group">
                   <span class="badge direction">{{ item.direction }}</span>
-                  <span class="badge quality">{{ item.quality }}</span>
+                  <span class="badge quality">{{ item.timeframes_confirmed }}</span>
                 </div>
               </div>
               <div class="metrics">
-                <div><span>Score</span><strong>{{ item.score }}</strong></div>
-                <div><span>Confidence</span><strong>{{ item.confidence }}</strong></div>
+                <div><span>Opp score</span><strong>{{ item.score }}</strong></div>
+                <div><span>Alignment</span><strong>{{ item.alignment_score }}</strong></div>
                 <div><span>Entry</span><strong>{{ item.entry }}</strong></div>
                 <div><span>Precio</span><strong>{{ item.price }}</strong></div>
-                <div><span>Dev %</span><strong>{{ item.deviation_pct }}</strong></div>
-                <div><span>Z-score</span><strong>{{ item.z_score }}</strong></div>
-                <div><span>Edge fees</span><strong>{{ item.edge_after_fees_pct }}</strong></div>
+                <div><span>RR</span><strong>{{ item.risk_reward_ratio }}</strong></div>
+                <div><span>Size %</span><strong>{{ item.position_size_pct }}</strong></div>
                 <div><span>SL / TP</span><strong>{{ item.stop_loss }} / {{ item.take_profit }}</strong></div>
               </div>
             </article>
@@ -124,7 +199,88 @@
 
     <section class="panel">
       <div class="panel-head">
-        <h2>Histórico reciente</h2>
+        <h2>Clasificaciones completas</h2>
+        <a href="/api/classified-opportunities" target="_blank" rel="noreferrer">JSON</a>
+      </div>
+      {% if classified_opportunities %}
+        <div class="card-stack">
+          {% for item in classified_opportunities %}
+            <article class="opportunity-card {{ item.direction | lower }}">
+              <div class="row">
+                <div>
+                  <h3>{{ item.symbol }}</h3>
+                  <p>{{ item.timestamp }} · {{ item.timeframe }}</p>
+                </div>
+                <div class="badge-group">
+                  <span class="badge direction">{{ item.direction }}</span>
+                  <span class="badge quality">{{ item.quality }}</span>
+                  <span class="badge quality">base {{ item.base_quality }}</span>
+                  <span class="badge execution {{ item.execution_status | lower }}">{{ item.execution_status }}</span>
+                </div>
+              </div>
+              <div class="metrics">
+                <div><span>Market score</span><strong>{{ item.score }}</strong></div>
+                <div><span>Base score</span><strong>{{ item.base_score }}</strong></div>
+                <div><span>Pre news</span><strong>{{ item.pre_news_score }}</strong></div>
+                <div><span>News impact</span><strong>{{ item.news_impact_score }}</strong></div>
+                <div><span>News bias</span><strong>{{ item.news_bias }}</strong></div>
+                <div><span>News events</span><strong>{{ item.news_event_count }}</strong></div>
+                <div><span>Confidence</span><strong>{{ item.confidence }}</strong></div>
+                <div><span>Entry</span><strong>{{ item.entry }}</strong></div>
+                <div><span>Precio</span><strong>{{ item.price }}</strong></div>
+                <div><span>Regime</span><strong>{{ item.market_regime }}</strong></div>
+                <div><span>Dev %</span><strong>{{ item.deviation_pct }}</strong></div>
+                <div><span>Z-score</span><strong>{{ item.z_score }}</strong></div>
+                <div><span>Edge fees</span><strong>{{ item.edge_after_fees_pct }}</strong></div>
+                <div><span>SL / TP</span><strong>{{ item.stop_loss }} / {{ item.take_profit }}</strong></div>
+              </div>
+              <p class="news-note {{ item.news_bias | lower }}">{{ item.news_comment }}</p>
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty">No hay clasificaciones con esos filtros.</p>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Universo por timeframe</h2>
+        <a href="/api/timeframe-universe" target="_blank" rel="noreferrer">JSON</a>
+      </div>
+      <div class="timeframe-grid">
+        {% for timeframe, items in timeframe_views.items() %}
+          <article class="timeframe-column">
+            <div class="row">
+              <h3>{{ timeframe }}</h3>
+              <span class="pill">{{ items|length }} filas</span>
+            </div>
+            {% if items %}
+              <div class="mini-list">
+                {% for item in items %}
+                  <article class="mini-card">
+                    <div>
+                      <strong>{{ item.symbol }}</strong>
+                      <span>{{ item.quality }} / {{ item.base_quality }} · {{ item.direction }} · {{ item.execution_status }}</span>
+                    </div>
+                    <div>
+                      <span>Score {{ item.score }}</span>
+                      <strong>{{ item.confidence }}</strong>
+                    </div>
+                  </article>
+                {% endfor %}
+              </div>
+            {% else %}
+              <p class="empty">Sin filas para este timeframe.</p>
+            {% endif %}
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Historico reciente</h2>
         <a href="/api/history" target="_blank" rel="noreferrer">JSON</a>
       </div>
       {% if history %}
@@ -143,7 +299,7 @@
           {% endfor %}
         </div>
       {% else %}
-        <p class="empty">No hay histórico todavía.</p>
+        <p class="empty">No hay historico todavia.</p>
       {% endif %}
     </section>
 
@@ -166,14 +322,16 @@
               <div class="metrics">
                 <div><span>Risk</span><strong>{{ item.risk_decision }}</strong></div>
                 <div><span>Capital</span><strong>{{ item.allocated_capital }}</strong></div>
-                <div><span>Posición</span><strong>{{ item.approved_position_size }}</strong></div>
+                <div><span>Posicion</span><strong>{{ item.approved_position_size }}</strong></div>
                 <div><span>Leverage</span><strong>{{ item.approved_leverage }}</strong></div>
+                <div><span>Score</span><strong>{{ item.directional_score }}</strong></div>
+                <div><span>Regimen</span><strong>{{ item.market_regime }}</strong></div>
               </div>
             </article>
           {% endfor %}
         </div>
       {% else %}
-        <p class="empty">No hay señales exportadas todavía.</p>
+        <p class="empty">No hay senales exportadas todavia.</p>
       {% endif %}
     </section>
   </main>

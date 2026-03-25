@@ -1,0 +1,4 @@
+timestamp,symbol,market_scope,event_type,sentiment,source_tier,severity,confidence,headline,url
+2026-03-25T11:00:00Z,XRPUSDT,,listing,BULLISH,OFFICIAL,0.95,0.95,Example exchange expands XRP perpetual support,https://example.com/xrp-listing
+2026-03-25T09:30:00Z,ALL,MACRO,regulation,BEARISH,OFFICIAL,0.85,0.90,Example regulator announces restrictive crypto guidance,https://example.com/regulation
+2026-03-25T08:15:00Z,SOLUSDT,,outage,BEARISH,MEDIA,0.70,0.75,Example media reports validator instability on Solana,https://example.com/solana-outage

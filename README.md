@@ -170,6 +170,51 @@ Solo si quieres alertas por email:
 - `ALERT_TO_EMAIL`
 - `SMTP_USE_TLS=true`
 
+## Noticias y score
+
+El motor puede ajustar el `market_opportunity_score` con eventos de noticias leidos desde `news_events.csv`.
+
+Columnas esperadas:
+
+```text
+timestamp,symbol,market_scope,event_type,sentiment,source_tier,severity,confidence,headline,url
+```
+
+- `symbol`: por ejemplo `XRPUSDT`, `SOLUSDT` o `ALL`
+- `market_scope`: por ejemplo `MACRO`
+- `sentiment`: `BULLISH` o `BEARISH`
+- `source_tier`: `OFFICIAL`, `AGGREGATOR`, `MEDIA` o `SOCIAL`
+- `severity`: entre `0` y `1`
+- `confidence`: entre `0` y `1`
+
+El ajuste se calcula en `news_engine.py` y hoy se limita a `+/-15` puntos sobre el score base.
+
+### Colector automatico
+
+Se agrego `news_collector.py` para poblar `news_events.csv` desde RSS y un evento macro de Fear & Greed.
+
+Ejemplo:
+
+```powershell
+cd "C:\Users\Jose.Duran\algoritmo- cripto\crypto_relative_value_engine"
+python news_collector.py --include-fear-greed
+```
+
+Variables utiles:
+
+- `NEWS_RSS_FEEDS`
+- `NEWS_LOOKBACK_HOURS`
+- `NEWS_MAX_ITEMS_PER_FEED`
+- `NEWS_SYMBOLS`
+- `NEWS_INCLUDE_FEAR_GREED`
+- `NEWS_EVENTS_PATH`
+
+Ejemplo de feeds:
+
+```text
+https://www.coindesk.com/arc/outboundfeeds/rss/,https://cointelegraph.com/rss
+```
+
 ## Metodologia de timeframes
 
 El monitor de Railway puede correr varios intervalos en paralelo usando `MONITOR_INTERVALS`.
