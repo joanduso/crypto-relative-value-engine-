@@ -8,9 +8,7 @@ $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PythonExe = "C:\Users\Jose.Duran\AppData\Local\Programs\Python\Python312\python.exe"
 $OutputDir = Join-Path $ProjectRoot "output"
 $DashboardPort = 8501
-$MobileDashboardPort = 8080
 $StreamlitPidFile = Join-Path $OutputDir "streamlit.pid"
-$MobileDashboardPidFile = Join-Path $OutputDir "mobile_dashboard.pid"
 $MonitorPidFile = Join-Path $OutputDir "monitor.pid"
 
 if (-not (Test-Path $OutputDir)) {
@@ -70,21 +68,6 @@ if (-not $streamlitActive) {
     Start-Sleep -Seconds 4
 }
 
-$mobileDashboardActive = (Test-PortListening -Port $MobileDashboardPort) -or (Test-PidFileActive -PidFile $MobileDashboardPidFile)
-if (-not $mobileDashboardActive) {
-    $mobileDashboardProcess = Start-Process -FilePath $PythonExe `
-        -ArgumentList @("mobile_dashboard.py") `
-        -WorkingDirectory $ProjectRoot `
-        -RedirectStandardOutput (Join-Path $OutputDir "mobile_dashboard_stdout.log") `
-        -RedirectStandardError (Join-Path $OutputDir "mobile_dashboard_stderr.log") `
-        -WindowStyle Hidden `
-        -PassThru
-
-    Set-Content -Path $MobileDashboardPidFile -Value $mobileDashboardProcess.Id
-
-    Start-Sleep -Seconds 4
-}
-
 if (-not (Test-PidFileActive -PidFile $MonitorPidFile)) {
     $env:MONITOR_INTERVALS = if ($env:MONITOR_INTERVALS) { $env:MONITOR_INTERVALS } else { "15m,1h,4h" }
     $monitorProcess = Start-Process -FilePath $PythonExe `
@@ -100,8 +83,4 @@ if (-not (Test-PidFileActive -PidFile $MonitorPidFile)) {
 
 if (-not $NoBrowser -and (Test-PortListening -Port $DashboardPort)) {
     Start-Process "http://localhost:$DashboardPort"
-}
-
-if (-not $NoBrowser -and (Test-PortListening -Port $MobileDashboardPort)) {
-    Start-Process "http://localhost:$MobileDashboardPort"
 }

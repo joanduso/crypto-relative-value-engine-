@@ -10,7 +10,7 @@ Lo que quedó armado:
 
 - Dashboard local con Streamlit en `http://localhost:8501`
 - Monitor continuo en segundo plano con `monitor.py`
-- Monitor multi-timeframe en Railway para `15m`, `1h` y `4h`
+- Monitor multi-timeframe para `15m`, `1h` y `4h`
 - Launcher único para ambos procesos: `start_services.ps1`
 - Wrapper para Windows: `start_services.cmd`
 - `run_monitor.ps1` y `run_monitor.cmd` redirigidos al launcher nuevo
@@ -79,6 +79,13 @@ Qué hace:
 - guarda PIDs en `output\streamlit.pid` y `output\monitor.pid`
 - escribe logs en `output\streamlit_stdout.log`, `output\streamlit_stderr.log`, `output\monitor_stdout.log`, `output\monitor_stderr.log`
 - intenta abrir el navegador en `http://localhost:8501`
+
+`localhost:8080` ya no forma parte del flujo local por defecto.
+Si alguna vez quieres usar el dashboard web/mobile, puedes correrlo manualmente con:
+
+```powershell
+python mobile_dashboard.py
+```
 
 También puedes usar:
 

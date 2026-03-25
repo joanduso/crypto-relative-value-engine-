@@ -112,6 +112,18 @@ def _news_for_symbols(events_df: pd.DataFrame, symbols: tuple[str, ...], limit: 
     return filtered.head(limit).reset_index(drop=True)
 
 
+def _relevant_news_for_symbol(events_df: pd.DataFrame, symbol: str, limit: int = 6) -> pd.DataFrame:
+    if events_df.empty:
+        return events_df.copy()
+    normalized_symbol = symbol.upper()
+    relevant = events_df.loc[
+        events_df["symbol"].astype(str).str.upper().isin({normalized_symbol, "ALL", "BTCUSDT"})
+        | events_df["market_scope"].astype(str).str.upper().isin({"MACRO", "MARKET", "ALL"})
+    ].copy()
+    relevant = relevant.sort_values("timestamp", ascending=False)
+    return relevant.head(limit).reset_index(drop=True)
+
+
 def _benchmark_trend(market_df: pd.DataFrame, symbol: str) -> dict[str, object]:
     subset = market_df.loc[market_df["symbol"] == symbol, ["timestamp", "close"]].copy()
     if subset.empty or len(subset) < 200:
@@ -164,6 +176,7 @@ st.caption("Dashboard local con ejecucion manual, scoring y tabla ampliada por a
 
 strategy_signals_df = _load_strategy_signals()
 news_events_df = _load_news_events()
+tracked_news_symbols = ("BNBUSDT", "XRPUSDT", "SOLUSDT", "LTCUSDT", "ADAUSDT", "LINKUSDT", "DOGEUSDT", "AVAXUSDT")
 
 with st.sidebar:
     st.header("Controles")
@@ -409,6 +422,27 @@ else:
 
     st.subheader("Dashboard terminal")
     st.code(result.dashboard_text, language="text")
+
+    st.subheader("Desglose de noticias por symbol")
+    st.caption("Estas listas muestran hasta 6 noticias relevantes por symbol, incluyendo eventos del propio activo y noticias macro que tambien pueden influir en `news_event_count`.")
+    for tracked_symbol in tracked_news_symbols:
+        symbol_news = _relevant_news_for_symbol(news_events_df, tracked_symbol, limit=6)
+        with st.expander(f"{tracked_symbol} | {len(symbol_news)} noticias relevantes", expanded=False):
+            if symbol_news.empty:
+                st.caption("Sin noticias relevantes cargadas para este symbol.")
+            else:
+                for item in symbol_news.itertuples(index=False):
+                    timestamp = pd.to_datetime(item.timestamp, errors="coerce", utc=True)
+                    ts_text = timestamp.strftime("%Y-%m-%d %H:%M UTC") if pd.notna(timestamp) else "-"
+                    headline = str(getattr(item, "headline", "") or "").strip()
+                    source = str(getattr(item, "source_tier", "") or "").strip()
+                    sentiment = str(getattr(item, "sentiment", "") or "").strip()
+                    event_symbol = str(getattr(item, "symbol", "") or "").strip()
+                    url = str(getattr(item, "url", "") or "").strip()
+                    if url:
+                        st.markdown(f"- `{ts_text}` [{headline}]({url})  \n  `{event_symbol} | {sentiment} | {source}`")
+                    else:
+                        st.markdown(f"- `{ts_text}` {headline}  \n  `{event_symbol} | {sentiment} | {source}`")
 
 st.subheader("Strategy Signals Monitor")
 if strategy_signals_df.empty:

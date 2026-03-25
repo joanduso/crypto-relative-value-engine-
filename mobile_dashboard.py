@@ -27,6 +27,7 @@ STRATEGY_SIGNALS_PATH = OUTPUT_DIR / "strategy_signals_latest.csv"
 EMBEDDED_MONITOR_PID_PATH = OUTPUT_DIR / "embedded_monitor.pid"
 
 DEFAULT_LIMIT = 50
+DEFAULT_DATA_MAX_AGE_HOURS = int(os.getenv("DASHBOARD_DATA_MAX_AGE_HOURS", "24"))
 
 
 app = Flask(__name__)
@@ -82,6 +83,25 @@ def _normalize_frame(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     if "timestamp" in out.columns:
         out["timestamp"] = pd.to_datetime(out["timestamp"], errors="coerce", utc=True)
+    return out
+
+
+def _keep_fresh_rows(df: pd.DataFrame, *, max_age_hours: int = DEFAULT_DATA_MAX_AGE_HOURS) -> pd.DataFrame:
+    if df.empty or "timestamp" not in df.columns:
+        return df.copy()
+
+    out = df.copy()
+    timestamps = pd.to_datetime(out["timestamp"], errors="coerce", utc=True)
+    freshest = timestamps.max()
+    if pd.isna(freshest):
+        return out.iloc[0:0].copy()
+
+    now_utc = pd.Timestamp.utcnow()
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.tz_localize("UTC")
+    age_hours = (now_utc - freshest).total_seconds() / 3600.0
+    if age_hours > max(max_age_hours, 1):
+        return out.iloc[0:0].copy()
     return out
 
 
@@ -293,9 +313,9 @@ def _dashboard_guide() -> dict[str, object]:
 
 
 def _prepare_tables() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    latest_df = _normalize_frame(_load_csv_family(MONITOR_LATEST_PATH))
-    history_df = _normalize_frame(_load_csv_family(DAILY_HISTORY_PATH))
-    signals_df = _normalize_frame(_load_csv_family(STRATEGY_SIGNALS_PATH))
+    latest_df = _keep_fresh_rows(_normalize_frame(_load_csv_family(MONITOR_LATEST_PATH)))
+    history_df = _keep_fresh_rows(_normalize_frame(_load_csv_family(DAILY_HISTORY_PATH)))
+    signals_df = _keep_fresh_rows(_normalize_frame(_load_csv_family(STRATEGY_SIGNALS_PATH)))
     return latest_df, history_df, signals_df
 
 
