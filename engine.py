@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from backtest import compare_mode_backtests
+from backtest import compare_bias_overlay_backtests
 from calibration import calibrate_from_history
 from dashboard import export_proposals_csv, render_terminal_dashboard
 from data_ingestion import DataConfig, fetch_market_data
@@ -106,7 +106,7 @@ def run_engine(config: EngineRunConfig) -> EngineRunResult:
     features_df = build_feature_frame(market_df, config.symbols, config.feature_config or FeatureConfig())
     ranked_universe = build_ranked_universe(features_df, config.mode)
     ranked_universe, _ = apply_news_overlay(ranked_universe, market_df)
-    ranked_universe, _ = apply_regime_overlay(ranked_universe, market_df, config.mode)
+    ranked_universe, _ = apply_regime_overlay(ranked_universe, market_df, config.mode, interval=config.interval)
     ranked_universe, _ = calibrate_from_history(
         features_df,
         ranked_universe,
@@ -133,7 +133,7 @@ def run_engine(config: EngineRunConfig) -> EngineRunResult:
     proposals = portfolio.prepare_orders(opportunities)
     proposals = proposals.loc[proposals["risk_checks_passed"]].copy() if not proposals.empty else proposals
 
-    backtest_stats = compare_mode_backtests(features_df)
+    backtest_stats = compare_bias_overlay_backtests(market_df, features_df, interval=config.interval)
     csv_path = export_proposals_csv(proposals, config.csv_path)
 
     if config.mode is EngineMode.AUTO_SAFE and not proposals.empty:

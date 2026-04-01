@@ -31,6 +31,7 @@ from alerting import (
     telegram_config_from_env,
     update_sent_alerts,
 )
+from btc_bias_data_collector import collect_etf_flows, collect_glassnode_metric
 from data_ingestion import fetch_klines, fetch_latest_funding_rate, klines_to_market_df, symbols_from_string
 from engine import DEFAULT_ALTS, EngineRunConfig, run_engine
 from interval_profiles import profile_for_interval
@@ -90,6 +91,34 @@ def news_feeds() -> tuple[str, ...]:
         "https://www.coindesk.com/arc/outboundfeeds/rss/,https://cointelegraph.com/rss",
     )
     return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
+def btc_bias_data_collection_enabled() -> bool:
+    return os.getenv("BTC_BIAS_DATA_COLLECTION_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def btc_bias_data_poll_minutes() -> int:
+    return int(os.getenv("BTC_BIAS_DATA_POLL_MINUTES", "180"))
+
+
+def btc_etf_flows_path() -> Path:
+    return Path(os.getenv("BTC_ETF_FLOWS_PATH", "btc_etf_flows.csv"))
+
+
+def btc_mvrv_path() -> Path:
+    return Path(os.getenv("BTC_MVRV_PATH", "btc_mvrv.csv"))
+
+
+def btc_sopr_path() -> Path:
+    return Path(os.getenv("BTC_SOPR_PATH", "btc_sopr.csv"))
+
+
+def glassnode_mvrv_path() -> str:
+    return os.getenv("GLASSNODE_MVRV_PATH", "/v1/metrics/market/mvrv")
+
+
+def glassnode_sopr_path() -> str:
+    return os.getenv("GLASSNODE_SOPR_PATH", "/v1/metrics/indicators/sopr_adjusted")
 
 
 def parse_interval_list(raw_value: str) -> tuple[str, ...]:
@@ -631,6 +660,38 @@ def maybe_collect_news(args: argparse.Namespace, next_news_run_at: float) -> flo
     return time.time() + max(news_poll_minutes(), 5) * 60
 
 
+def maybe_collect_btc_bias_data(next_run_at: float) -> float:
+    if not btc_bias_data_collection_enabled():
+        return next_run_at
+
+    now = time.time()
+    if now < next_run_at:
+        return next_run_at
+
+    etf_rows = 0
+    mvrv_rows = 0
+    sopr_rows = 0
+    try:
+        etf_rows = collect_etf_flows(btc_etf_flows_path())
+    except Exception as exc:
+        logger.warning("btc etf collector failed", extra={"error": str(exc)})
+
+    try:
+        if os.getenv("GLASSNODE_API_KEY", "").strip():
+            mvrv_rows = collect_glassnode_metric(glassnode_mvrv_path(), btc_mvrv_path())
+            sopr_rows = collect_glassnode_metric(glassnode_sopr_path(), btc_sopr_path())
+    except Exception as exc:
+        logger.warning("btc onchain collector failed", extra={"error": str(exc)})
+
+    logger.info(
+        "btc bias data collector updated etf_rows=%s mvrv_rows=%s sopr_rows=%s",
+        etf_rows,
+        mvrv_rows,
+        sopr_rows,
+    )
+    return time.time() + max(btc_bias_data_poll_minutes(), 60) * 60
+
+
 def main() -> None:
     configure_logging()
     args = parse_args()
@@ -657,12 +718,14 @@ def main() -> None:
 
     next_run_by_interval = {interval: 0.0 for interval in intervals}
     next_news_run_at = 0.0
+    next_btc_bias_run_at = 0.0
 
     while True:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         current_time = time.time()
         ran_cycle = False
         next_news_run_at = maybe_collect_news(args, next_news_run_at)
+        next_btc_bias_run_at = maybe_collect_btc_bias_data(next_btc_bias_run_at)
         for interval in intervals:
             profile = profile_for_interval(interval)
             if current_time < next_run_by_interval[interval]:

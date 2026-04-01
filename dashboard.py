@@ -52,21 +52,26 @@ def render_terminal_dashboard(
                 )
             )
 
-    lines.extend(["", "Backtest Comparison", "mode | total_return% | sharpe | max_drawdown% | win_rate% | avg_hold_hours | pnl_after_fees%"])
+    has_variant = "variant" in backtest_stats.columns
+    header = "mode | total_return% | sharpe | max_drawdown% | win_rate% | avg_hold_hours | pnl_after_fees%"
+    if has_variant:
+        header = "mode | variant | total_return% | sharpe | max_drawdown% | win_rate% | avg_hold_hours | pnl_after_fees%"
+    lines.extend(["", "Backtest Comparison", header])
     for row in backtest_stats.itertuples(index=False):
-        lines.append(
-            " | ".join(
-                [
-                    str(row.mode),
-                    _format_float(row.total_return_pct, 2),
-                    _format_float(row.sharpe, 2),
-                    _format_float(row.max_drawdown_pct, 2),
-                    _format_float(row.win_rate_pct, 2),
-                    _format_float(row.avg_holding_hours, 1),
-                    _format_float(row.pnl_after_fees_pct, 2),
-                ]
-            )
+        parts = [str(row.mode)]
+        if has_variant:
+            parts.append(str(getattr(row, "variant", "base")))
+        parts.extend(
+            [
+                _format_float(row.total_return_pct, 2),
+                _format_float(row.sharpe, 2),
+                _format_float(row.max_drawdown_pct, 2),
+                _format_float(row.win_rate_pct, 2),
+                _format_float(row.avg_holding_hours, 1),
+                _format_float(row.pnl_after_fees_pct, 2),
+            ]
         )
+        lines.append(" | ".join(parts))
     return "\n".join(lines)
 
 

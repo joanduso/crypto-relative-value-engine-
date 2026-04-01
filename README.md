@@ -222,6 +222,98 @@ Ejemplo de feeds:
 https://www.coindesk.com/arc/outboundfeeds/rss/,https://cointelegraph.com/rss
 ```
 
+## BTC bias phase 2
+
+Se agrego una capa mas completa de sesgo direccional de BTC con:
+
+- tecnica
+- derivados
+- macro
+- ETF flows
+- on-chain
+- noticias y sentimiento
+
+Archivos clave:
+
+- `btc_market_bias_engine.py`
+- `regime_engine.py`
+- `backtest.py`
+
+Variables opcionales para enriquecer el bias:
+
+- `BTC_ETF_FLOWS_PATH`
+- `BTC_ETF_REMOTE_ENABLED=true`
+- `BTC_MVRV_PATH`
+- `BTC_SOPR_PATH`
+- `GLASSNODE_API_KEY`
+- `GLASSNODE_MVRV_PATH`
+- `GLASSNODE_SOPR_PATH`
+
+Formato esperado para CSVs externos:
+
+```text
+timestamp,value
+2026-03-01T00:00:00Z,123.4
+```
+
+Ejemplos:
+
+- `btc_etf_flows.csv`: flujo neto diario en millones de USD
+- `btc_mvrv.csv`: serie diaria de MVRV
+- `btc_sopr.csv`: serie diaria de SOPR
+
+El backtest ahora compara:
+
+- `base`
+- `regime_overlay`
+- `btc_bias_overlay`
+- `combined_overlay`
+
+### Collector rapido
+
+Se agrego `btc_bias_data_collector.py` para poblar esos CSVs.
+
+Ejemplo:
+
+```powershell
+cd "C:\Users\Jose.Duran\algoritmo- cripto\crypto_relative_value_engine"
+py -3 btc_bias_data_collector.py
+```
+
+Si quieres solo ETF flows:
+
+```powershell
+py -3 btc_bias_data_collector.py --skip-mvrv --skip-sopr
+```
+
+Si tienes Glassnode:
+
+```powershell
+$env:GLASSNODE_API_KEY="tu_api_key"
+py -3 btc_bias_data_collector.py
+```
+
+### Cadencia recomendada en monitor
+
+Para no meter ruido ni gasto inutil de llamadas:
+
+- alertas de trading: segun el intervalo del monitor (`15m` cada `5` min, `1h` cada `5` min, `4h` cada `15` min)
+- noticias: cada `20` a `30` minutos
+- ETF flows y on-chain: cada `180` minutos
+
+Variables del monitor:
+
+- `NEWS_COLLECTION_ENABLED=true`
+- `NEWS_POLL_MINUTES=30`
+- `BTC_BIAS_DATA_COLLECTION_ENABLED=true`
+- `BTC_BIAS_DATA_POLL_MINUTES=180`
+
+La razon es simple:
+
+- las noticias pueden cambiar el sesgo intradia
+- ETF flows cambian por dia y no necesitan polling agresivo
+- MVRV y SOPR son datos lentos; consultarlos cada `3h` es suficiente para alerts operativas
+
 ## Metodologia de timeframes
 
 El monitor de Railway puede correr varios intervalos en paralelo usando `MONITOR_INTERVALS`.

@@ -249,6 +249,13 @@ else:
         f"{eth_trend['trend']} {eth_trend['arrow']}",
         f"{eth_trend['delta_pct']}% vs EMA200",
     )
+    if not result.ranked_universe.empty and "btc_bias" in result.ranked_universe.columns:
+        btc_bias_row = result.ranked_universe.iloc[0]
+        bias_a, bias_b, bias_c, bias_d = st.columns(4)
+        bias_a.metric("BTC bias", str(btc_bias_row.get("btc_bias", "-")))
+        bias_b.metric("BTC regime", str(btc_bias_row.get("btc_bias_regime", "-")))
+        bias_c.metric("Prob bull 24h", f"{float(btc_bias_row.get('btc_prob_bull_24h', 0.0)) * 100:.1f}%")
+        bias_d.metric("Stress score", f"{float(btc_bias_row.get('btc_stress_score', 0.0)):.1f}")
     st.subheader("Noticias BTC y ETH")
     btc_eth_news = _news_for_symbols(news_events_df, ("BTCUSDT", "ETHUSDT"), limit=6)
     if btc_eth_news.empty:
@@ -321,6 +328,10 @@ else:
             "news_bias",
             "news_event_count",
             "news_comment",
+            "btc_bias",
+            "btc_bias_regime",
+            "btc_prob_bull_24h",
+            "btc_stress_score",
             "effective_win_rate_pct",
             "win_rate_source",
             "risk_reward_ratio",
@@ -354,6 +365,32 @@ else:
             "news_bias",
             "news_event_count",
             "news_comment",
+            "btc_bias",
+            "btc_bias_regime",
+            "btc_bias_score",
+            "btc_prob_bull_4h",
+            "btc_prob_bull_24h",
+            "btc_stress_score",
+            "btc_technical_score",
+            "btc_derivatives_score",
+            "btc_macro_score",
+            "btc_sentiment_score",
+            "btc_news_score",
+            "btc_etf_score",
+            "btc_onchain_score",
+            "btc_funding_rate_live",
+            "btc_funding_zscore",
+            "btc_open_interest_change_pct",
+            "btc_long_short_ratio",
+            "btc_fear_greed_value",
+            "btc_vix_level",
+            "btc_us10y_level",
+            "btc_dollar_index_level",
+            "btc_etf_net_flow_usd_m",
+            "btc_etf_flow_5d_usd_m",
+            "btc_mvrv_value",
+            "btc_sopr_value",
+            "btc_bias_score_adjustment",
             "market_opportunity_score",
             "signal_quality",
             "passes_filters",
@@ -388,6 +425,10 @@ else:
             "news_impact_score",
             "news_bias",
             "news_comment",
+            "btc_bias",
+            "btc_bias_regime",
+            "btc_prob_bull_24h",
+            "btc_stress_score",
             "market_opportunity_score",
             "signal_quality",
             "passes_filters",
@@ -410,6 +451,10 @@ else:
             "news_impact_score",
             "news_bias",
             "news_comment",
+            "btc_bias",
+            "btc_bias_regime",
+            "btc_prob_bull_24h",
+            "btc_stress_score",
             "market_opportunity_score",
             "signal_quality",
             "suggested_direction",

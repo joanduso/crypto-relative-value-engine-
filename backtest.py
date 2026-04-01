@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from btc_market_bias_engine import build_btc_market_bias_frame
 from signal_engine import EngineMode, resolve_mode_thresholds
 
 
@@ -265,6 +266,74 @@ def _build_positions_with_fee(features_df: pd.DataFrame, mode: EngineMode) -> pd
     return bt
 
 
+def _reprice_positions(bt: pd.DataFrame) -> pd.DataFrame:
+    out = bt.copy()
+    turnover = pd.Series(out["position"]).groupby(out["symbol"]).diff().abs().fillna(np.abs(out["position"]))
+    fee_rate = out["fee_rate"].iloc[0] if "fee_rate" in out.columns and not out.empty else 0.0
+    out["strategy_return"] = pd.Series(out["position"]).groupby(out["symbol"]).shift(1).fillna(0.0) * out["asset_return"]
+    out["net_strategy_return"] = out["strategy_return"] - (turnover * fee_rate)
+    return out
+
+
+def _apply_btc_bias_overlay_to_positions(bt: pd.DataFrame, market_df: pd.DataFrame, interval: str = "1h") -> pd.DataFrame:
+    if bt.empty:
+        return bt.copy()
+
+    bias_frame = build_btc_market_bias_frame(market_df, interval=interval)
+    if bias_frame.empty:
+        return bt.copy()
+
+    bias_view = bias_frame[
+        [
+            "timestamp",
+            "bias",
+            "regime",
+            "composite_score",
+            "bull_prob_24h",
+            "stress_score",
+            "technical_score",
+            "derivatives_score",
+            "macro_score",
+            "sentiment_score",
+            "etf_score",
+            "onchain_score",
+        ]
+    ].copy()
+
+    out = bt.sort_values(["timestamp", "symbol"]).copy()
+    out = pd.merge_asof(out.sort_values("timestamp"), bias_view.sort_values("timestamp"), on="timestamp", direction="backward")
+    out["bias"] = out["bias"].fillna("NEUTRAL")
+    out["regime"] = out["regime"].fillna("range")
+    out["composite_score"] = pd.to_numeric(out["composite_score"], errors="coerce").fillna(0.0)
+    out["bull_prob_24h"] = pd.to_numeric(out["bull_prob_24h"], errors="coerce").fillna(0.5)
+    out["stress_score"] = pd.to_numeric(out["stress_score"], errors="coerce").fillna(50.0)
+
+    long_mask = out["position"] > 0
+    short_mask = out["position"] < 0
+    size_multiplier = np.ones(len(out), dtype=float)
+
+    stress_long = long_mask & (out["regime"] == "stress") & (out["bull_prob_24h"] <= 0.35)
+    bear_long = long_mask & (out["bias"] == "BEARISH")
+    weak_long = long_mask & (out["bias"] == "NEUTRAL") & (out["bull_prob_24h"] < 0.50)
+    bull_long = long_mask & (out["bias"] == "BULLISH") & (out["bull_prob_24h"] >= 0.58)
+
+    stress_short = short_mask & (out["regime"] == "stress")
+    bear_short = short_mask & (out["bias"] == "BEARISH") & (out["bull_prob_24h"] <= 0.42)
+    bull_short = short_mask & (out["bias"] == "BULLISH") & (out["bull_prob_24h"] >= 0.62)
+
+    size_multiplier = np.where(stress_long, 0.0, size_multiplier)
+    size_multiplier = np.where(bear_long & ~stress_long, 0.45, size_multiplier)
+    size_multiplier = np.where(weak_long & ~stress_long & ~bear_long, 0.75, size_multiplier)
+    size_multiplier = np.where(bull_long, 1.10, size_multiplier)
+
+    size_multiplier = np.where(stress_short, 1.15, size_multiplier)
+    size_multiplier = np.where(bear_short & ~stress_short, 1.05, size_multiplier)
+    size_multiplier = np.where(bull_short, 0.70, size_multiplier)
+
+    out["position"] = out["position"].astype(float) * size_multiplier
+    return _reprice_positions(out)
+
+
 def compare_regime_overlay_backtests(
     market_df: pd.DataFrame,
     features_df: pd.DataFrame,
@@ -277,6 +346,43 @@ def compare_regime_overlay_backtests(
         overlay_bt = _apply_regime_overlay_to_positions(base_bt.copy(), market_df, mode)
 
         for label, bt in (("base", base_bt), ("regime_overlay", overlay_bt)):
+            stats = _trade_statistics(bt, cfg)
+            active_exposure_pct = float((bt["position"].abs() > 0).mean() * 100.0) if not bt.empty else 0.0
+            trades = float(bt.groupby("symbol")["position"].diff().abs().fillna(bt["position"].abs()).sum() / 2.0) if not bt.empty else 0.0
+            long_share_pct = float((bt["position"] > 0).mean() * 100.0) if not bt.empty else 0.0
+            rows.append(
+                {
+                    "mode": mode.value,
+                    "variant": label,
+                    **stats,
+                    "active_exposure_pct": active_exposure_pct,
+                    "trade_count_est": trades,
+                    "long_share_pct": long_share_pct,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def compare_bias_overlay_backtests(
+    market_df: pd.DataFrame,
+    features_df: pd.DataFrame,
+    interval: str = "1h",
+    config: BacktestConfig | None = None,
+) -> pd.DataFrame:
+    cfg = config or BacktestConfig()
+    rows: list[dict[str, float | str]] = []
+    for mode in (EngineMode.COPILOT, EngineMode.COPILOT_RELAXED, EngineMode.AUTO_SAFE):
+        base_bt = _build_positions_with_fee(features_df, mode)
+        regime_bt = _apply_regime_overlay_to_positions(base_bt.copy(), market_df, mode)
+        btc_bias_bt = _apply_btc_bias_overlay_to_positions(base_bt.copy(), market_df, interval=interval)
+        combined_bt = _apply_btc_bias_overlay_to_positions(regime_bt.copy(), market_df, interval=interval)
+
+        for label, bt in (
+            ("base", base_bt),
+            ("regime_overlay", regime_bt),
+            ("btc_bias_overlay", btc_bias_bt),
+            ("combined_overlay", combined_bt),
+        ):
             stats = _trade_statistics(bt, cfg)
             active_exposure_pct = float((bt["position"].abs() > 0).mean() * 100.0) if not bt.empty else 0.0
             trades = float(bt.groupby("symbol")["position"].diff().abs().fillna(bt["position"].abs()).sum() / 2.0) if not bt.empty else 0.0

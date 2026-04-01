@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from btc_market_bias_engine import build_btc_market_bias
 from signal_engine import EngineMode, market_score_to_quality
 
 
@@ -128,8 +129,10 @@ def apply_regime_overlay(
     ranked_universe: pd.DataFrame,
     market_df: pd.DataFrame,
     mode: EngineMode = EngineMode.COPILOT,
+    interval: str = "1h",
 ) -> tuple[pd.DataFrame, RegimeState]:
     regime_state = _btc_regime_state(market_df)
+    bias_state = build_btc_market_bias(market_df, interval=interval)
     if ranked_universe.empty:
         return ranked_universe.copy(), regime_state
 
@@ -143,8 +146,37 @@ def apply_regime_overlay(
     out["breadth_stress_score"] = regime_state.breadth_stress_score
     out["return_dispersion_pct"] = regime_state.return_dispersion_pct
     out["avg_alt_correlation"] = regime_state.avg_alt_correlation
+    out["btc_bias"] = bias_state.bias
+    out["btc_bias_regime"] = bias_state.regime
+    out["btc_bias_score"] = bias_state.composite_score
+    out["btc_prob_bull_4h"] = bias_state.bull_prob_4h
+    out["btc_prob_bull_24h"] = bias_state.bull_prob_24h
+    out["btc_stress_score"] = bias_state.stress_score
+    out["btc_technical_score"] = bias_state.technical_score
+    out["btc_derivatives_score"] = bias_state.derivatives_score
+    out["btc_macro_score"] = bias_state.macro_score
+    out["btc_sentiment_score"] = bias_state.sentiment_score
+    out["btc_news_score"] = bias_state.news_score
+    out["btc_etf_score"] = bias_state.etf_score
+    out["btc_onchain_score"] = bias_state.onchain_score
+    out["btc_funding_rate_live"] = bias_state.funding_rate
+    out["btc_funding_zscore"] = bias_state.funding_zscore
+    out["btc_open_interest_change_pct"] = bias_state.open_interest_change_pct
+    out["btc_long_short_ratio"] = bias_state.long_short_ratio
+    out["btc_fear_greed_value"] = bias_state.fear_greed_value
+    out["btc_vix_level"] = bias_state.vix_level
+    out["btc_vix_5d_change_pct"] = bias_state.vix_5d_change_pct
+    out["btc_us10y_level"] = bias_state.us10y_level
+    out["btc_us10y_5d_change_bps"] = bias_state.us10y_5d_change_bps
+    out["btc_dollar_index_level"] = bias_state.dollar_index_level
+    out["btc_dollar_5d_change_pct"] = bias_state.dollar_5d_change_pct
+    out["btc_etf_net_flow_usd_m"] = bias_state.etf_net_flow_usd_m
+    out["btc_etf_flow_5d_usd_m"] = bias_state.etf_flow_5d_usd_m
+    out["btc_mvrv_value"] = bias_state.mvrv_value
+    out["btc_sopr_value"] = bias_state.sopr_value
 
     long_mask = out["suggested_direction"].astype(str).str.upper() == "LONG"
+    short_mask = out["suggested_direction"].astype(str).str.upper() == "SHORT"
     micro_reversal = pd.to_numeric(out.get("micro_reversal_score"), errors="coerce").fillna(0.0)
     alt_rsi = pd.to_numeric(out.get("alt_rsi_14"), errors="coerce").fillna(50.0)
     ema20_slope = pd.to_numeric(out.get("alt_ema_20_slope_pct"), errors="coerce").fillna(0.0)
@@ -162,6 +194,12 @@ def apply_regime_overlay(
         & market_stress
         & (regime_state.btc_price_vs_ema200_pct <= -1.0)
     )
+    hard_veto_long = hard_veto_long | (
+        long_mask
+        & (bias_state.regime == "stress")
+        & (bias_state.bull_prob_24h <= 0.35)
+        & (bias_state.composite_score <= -20.0)
+    )
 
     validation_score = (
         (micro_reversal / 8.0)
@@ -176,6 +214,13 @@ def apply_regime_overlay(
         required_confirmation = 2.5
     elif regime_state.btc_regime == "trending_bearish":
         required_confirmation = 3.25
+    if bias_state.regime == "stress":
+        required_confirmation += 1.0
+    elif bias_state.bias == "BEARISH":
+        required_confirmation += 0.75
+    elif bias_state.bias == "BULLISH" and regime_state.btc_regime != "trending_bearish":
+        required_confirmation -= 0.25
+    required_confirmation = float(max(required_confirmation, 1.0))
 
     entry_validation_passed = (~long_mask) | (validation_score >= required_confirmation)
     if mode is EngineMode.COPILOT:
@@ -187,6 +232,7 @@ def apply_regime_overlay(
     confidence_penalty = np.zeros(len(out), dtype=float)
     exposure_cap = np.full(len(out), 1.0, dtype=float)
     validation_buffer = validation_score - required_confirmation
+    bias_score_adjustment = np.zeros(len(out), dtype=float)
 
     if regime_state.btc_regime == "range":
         strong_range_long = long_mask & (validation_buffer >= 1.0)
@@ -252,6 +298,26 @@ def apply_regime_overlay(
 
     size_multiplier = np.where(hard_veto_long, 0.0, size_multiplier)
     exposure_cap = np.where(hard_veto_long, 0.0, exposure_cap)
+    if bias_state.regime == "stress":
+        size_multiplier = np.where(long_mask, np.minimum(size_multiplier, 0.25), size_multiplier)
+        exposure_cap = np.where(long_mask, np.minimum(exposure_cap, 0.25), exposure_cap)
+        confidence_penalty = np.where(long_mask, confidence_penalty + 10.0, confidence_penalty)
+    elif bias_state.bias == "BEARISH":
+        size_multiplier = np.where(long_mask, np.minimum(size_multiplier, 0.6), size_multiplier)
+        exposure_cap = np.where(long_mask, np.minimum(exposure_cap, 0.6), exposure_cap)
+        confidence_penalty = np.where(long_mask, confidence_penalty + 5.0, confidence_penalty)
+    elif bias_state.bias == "BULLISH":
+        confidence_penalty = np.where(long_mask, np.maximum(confidence_penalty - 1.5, 0.0), confidence_penalty)
+
+    if bias_state.regime == "stress":
+        bias_score_adjustment = np.where(long_mask, -10.0, bias_score_adjustment)
+        bias_score_adjustment = np.where(short_mask, 4.0, bias_score_adjustment)
+    elif bias_state.bias == "BEARISH":
+        bias_score_adjustment = np.where(long_mask, -6.0, bias_score_adjustment)
+        bias_score_adjustment = np.where(short_mask, 3.0, bias_score_adjustment)
+    elif bias_state.bias == "BULLISH":
+        bias_score_adjustment = np.where(long_mask, 4.0, bias_score_adjustment)
+        bias_score_adjustment = np.where(short_mask, -2.0, bias_score_adjustment)
 
     out["regime_hard_veto_long"] = hard_veto_long
     out["entry_validation_passed"] = entry_validation_passed
@@ -263,6 +329,7 @@ def apply_regime_overlay(
     out["base_confidence_score"] = pd.to_numeric(out["confidence_score"], errors="coerce").fillna(0.0)
     out["base_market_opportunity_score"] = pd.to_numeric(out["market_opportunity_score"], errors="coerce").fillna(0.0)
     out["base_signal_quality"] = out["signal_quality"].astype(str)
+    out["btc_bias_score_adjustment"] = bias_score_adjustment
 
     execution_status = np.full(len(out), "OK", dtype=object)
     execution_status = np.where(hard_veto_long, "BLOCKED", execution_status)
@@ -295,15 +362,18 @@ def apply_regime_overlay(
     if mode is EngineMode.COPILOT:
         out["passes_filters"] = out["passes_filters"]
         out["confidence_score"] = out["base_confidence_score"]
-        out["market_opportunity_score"] = out["base_market_opportunity_score"]
-        out["signal_quality"] = out["base_signal_quality"]
+        out["market_opportunity_score"] = (
+            out["base_market_opportunity_score"] + out["btc_bias_score_adjustment"]
+        ).clip(lower=0.0, upper=100.0)
+        out["signal_quality"] = out["market_opportunity_score"].apply(_quality_from_market_score)
     else:
         out["passes_filters"] = out["passes_filters"] & out["regime_filter_passed"]
         out["confidence_score"] = (out["base_confidence_score"] - confidence_penalty).clip(lower=0.0)
         out["market_opportunity_score"] = (
             out["base_market_opportunity_score"]
+            + out["btc_bias_score_adjustment"]
             - confidence_penalty * 0.75
-        ).clip(lower=0.0)
+        ).clip(lower=0.0, upper=100.0)
         out["signal_quality"] = out["market_opportunity_score"].apply(_quality_from_market_score)
 
     out["regime_score_penalty"] = np.round(confidence_penalty * 0.75, 4)
